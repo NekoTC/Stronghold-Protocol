@@ -5,7 +5,7 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { RAW, mirrorUrl } from './sources.mjs';
+import { RAW, downloadUrls } from './sources.mjs';
 
 /**
  * Read a cached JSON file, downloading it first when missing or unparsable.
@@ -15,21 +15,28 @@ import { RAW, mirrorUrl } from './sources.mjs';
  * @param {boolean} [o.refresh] force re-download
  * @param {boolean} [o.offline] never download (throw when the cache is missing)
  * @param {(m:string)=>void} [o.log]
+ * @param {'direct'|'mirror'} [o.source]
+ * @param {string} [o.proxyPrefix]
+ * @param {typeof fetch} [o.fetchImpl]
  * @returns {Promise<any>} parsed JSON
  */
-export async function cachedJson({ cacheFile, url, refresh = false, offline = false, log = console.log }) {
+export async function cachedJson({ cacheFile, url, refresh = false, offline = false, log = console.log, source = 'direct', proxyPrefix, fetchImpl = globalThis.fetch }) {
   if (!refresh || offline) {
     try { return JSON.parse(await readFile(cacheFile, 'utf8')); } catch (e) {
       if (offline) throw new Error(`--offline: cached index ${cacheFile} is missing or corrupt (${e.message}); run once online`);
     }
   }
   let lastErr = null;
-  for (const src of [url, mirrorUrl(url)].filter(Boolean)) {
+  for (const src of downloadUrls(url, { source, proxyPrefix })) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         log(`[cache] downloading ${src}`);
-        const res = await fetch(src, { signal: AbortSignal.timeout(180000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const res = await fetchImpl(src, { signal: AbortSignal.timeout(180000) });
+        if (!res.ok) {
+          await res.body?.cancel();
+          if (res.status === 404 || res.status === 410) { lastErr = new Error(`HTTP ${res.status}`); break; }
+          throw new Error(`HTTP ${res.status}`);
+        }
         const text = await res.text();
         const json = JSON.parse(text);
         await mkdir(dirname(cacheFile), { recursive: true });
@@ -48,11 +55,12 @@ export async function cachedJson({ cacheFile, url, refresh = false, offline = fa
 /**
  * Load audio_data.json (official) and Ark-Models models_data.json.
  * @param {string} root project root
- * @param {{refresh?:boolean, offline?:boolean, log?:(m:string)=>void}} [opts]
+ * @param {{refresh?:boolean, offline?:boolean, log?:(m:string)=>void, source?:'direct'|'mirror', proxyPrefix?:string, fetchImpl?:typeof fetch}} [opts]
  * @returns {Promise<{ audioData: any, modelsData: any }>}
  */
 export async function loadIndexes(root, opts = {}) {
   const audioData = await cachedJson({
+    ...opts,
     cacheFile: join(root, '.cache', 'gamedata', 'excel', 'audio_data.json'),
     url: RAW.gamedata + 'excel/audio_data.json',
     refresh: opts.refresh,
@@ -60,6 +68,7 @@ export async function loadIndexes(root, opts = {}) {
     log: opts.log,
   });
   const modelsData = await cachedJson({
+    ...opts,
     cacheFile: join(root, '.cache', 'ark-models', 'models_data.json'),
     url: RAW.arkModels + 'models_data.json',
     refresh: opts.refresh,

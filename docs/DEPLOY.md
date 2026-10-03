@@ -36,6 +36,26 @@
 
 等价的手动命令：`npm ci`、`node tools/setup.mjs`、`npm start`。
 
+#### 国内镜像下载
+
+Setup 开始下载素材时，默认检测公网出口 IP 所属地区：中国大陆（`CN`）优先使用国内镜像，其他地区优先原始源。检测使用 Cloudflare trace，失败后尝试 ipwho.is，每个服务最多等待 4 秒；检测失败仍继续下载，优先原始源。只显示地区，不保存 IP；使用代理时以出口 IP 为准。`--check`、`--no-assets` 和素材已齐全时不检测；直接运行素材下载器的 `--offline` 也不检测。
+
+镜像方法是在完整 GitHub 链接前加 `https://gh-proxy/`，例如：
+
+```text
+https://gh-proxy/https://raw.githubusercontent.com/OWNER/REPO/BRANCH/file.png
+```
+
+镜像优先顺序为「前缀镜像 → 原始源 → jsDelivr」；原始源优先为「原始源 → jsDelivr → 前缀镜像」。索引、图片、Spine、音频和字体都使用此规则（音频 voice 分支跳过 jsDelivr）。保留格式校验、重试和已有文件跳过逻辑；npm / pip 依赖不使用 GitHub 前缀。
+
+```powershell
+node tools/setup.mjs --asset-source=auto    # 默认：按公网 IP 自动选择
+node tools/setup.mjs --asset-source=mirror  # 手动优先国内镜像
+node tools/setup.mjs --asset-source=direct  # 手动优先原始源
+```
+
+`node tools/fetch-assets.mjs` 同样支持 `--asset-source=auto|direct|mirror`。也可设置环境变量 `SP_ASSET_SOURCE`，命令行优先。默认前缀按配置使用 `https://gh-proxy/`（主机名为 `gh-proxy`，需要本机网络能解析）；若实际镜像服务使用完整域名，通过 `SP_GITHUB_PROXY` 指定，例如 PowerShell 中先设置 `$env:SP_GITHUB_PROXY = 'https://your-mirror.example/'` 再运行 Setup。前缀只处理 GitHub 下载链接，不重复添加。
+
 ### 1.2 防火墙
 
 - 第一次启动时 Windows 会弹出「Windows 安全中心警报」：勾选**专用网络**并点「允许访问」。
@@ -235,7 +255,7 @@ services:
 | 任何问题 | `node tools/doctor.mjs`：Node 版本、依赖、素材完整性、端口、局域网地址、防火墙、网络类型 |
 | `端口已被占用 / EADDRINUSE` | 已经有一个服务器在运行（自启任务？）或其他程序占用 3000：换端口 `scripts\start-windows.bat --port 3001` |
 | 朋友打不开页面 | 防火墙规则 / 网络类型（1.2）；确认用的是 `LAN` 地址而不是 `localhost`；访客 Wi-Fi 常开启「AP 隔离」；不在同一网络请看第 2 节 |
-| 画面是占位图、没有声音 | 素材没下完：重新运行 `node tools/setup.mjs`（会续传）；缺失明细在 `.cache/assets-report.json`。GitHub 原始地址访问失败时会自动改用 jsDelivr 镜像 |
+| 画面是占位图、没有声音 | 素材没下完：重新运行 `node tools/setup.mjs`（会续传）；缺失明细在 `.cache/assets-report.json`。下载源按公网 IP 自动选择并回退；可用 `--asset-source=mirror` 手动优先国内镜像（见上文） |
 | 素材下载很慢 / 失败 | 网络问题可随时中断，重新运行会跳过已完成的文件；`node tools/fetch-assets.mjs --concurrency=4` 降低并发。有文件没下载成功时，素材清单 `data/assets.json` 保持不变（脚本列出缺少的条目并以非零状态结束；游戏里缺的图片用占位图，缺的声音不播放），重新运行即可补齐 |
 | 本地提取失败 | 不影响游戏。确认客户端已下载全部资源；Python 版本太新导致依赖安装失败时，安装 Python 3.12 后删除 `.venv-extract` 再运行 `node tools/setup.mjs --local` |
 | 3D 棋盘没出现 | 需要本地提取的棋盘贴图（`node tools/doctor.mjs` 会显示「3D 棋盘可用」），以及支持 WebGL2 的浏览器 |
