@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, modeIdFor } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, OnlinePill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
@@ -260,6 +260,7 @@ export function LobbyScreen() {
       <div class="topbar__left">
         <${Button} variant="ghost" size="sm" icon="chevronLeft" onClick=${backToTitle} title="返回标题">返回<//>
         <${PingPill} ms=${conn.ping} online=${online} />
+        <${OnlinePill} count=${conn.onlineCount} />
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
