@@ -7,7 +7,7 @@
 //
 // Idempotent: existing files with the right size are skipped, so re-running is
 // cheap. Downloads use ~16 parallel connections, 3 retries per source and a
-// jsDelivr mirror fallback. Spine atlases get `size:` (and `pma: true` for
+// region-selected GitHub proxy / jsDelivr fallback. Spine atlases get `size:` (and `pma: true` for
 // enemies); every skeleton is parsed to resolve animation roles.
 //
 // Usage: node tools/fetch-assets.mjs [--concurrency=16] [--force] [--offline]
@@ -18,6 +18,8 @@ import { existsSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Downloader } from './assets/downloader.mjs';
+import { selectDownloadSource, validateSource } from './assets/network.mjs';
+import { normalizeProxyPrefix } from './assets/sources.mjs';
 import { loadIndexes } from './assets/cache.mjs';
 import { indexAudio } from './assets/audio.mjs';
 import { buildPlan } from './assets/plan.mjs';
@@ -35,23 +37,27 @@ const REPORT = join(CACHE, 'assets-report.json');
 
 const HELP = `Usage: node tools/fetch-assets.mjs [options]
   --concurrency=N   parallel downloads (default 16)
+  --asset-source=M  auto (IP detection, default), direct, or mirror
   --force           re-download files even when present
   --offline         no network: post-process what is on disk and rebuild data/assets.json
   --dry-run         print the plan and exit
   --refresh-index   re-download audio_data.json / models_data.json indexes
   --prune           delete files under public/assets that the manifest no longer references
-  --help            this text`;
+  --help            this text
+Environment: SP_ASSET_SOURCE sets the default source; SP_GITHUB_PROXY sets the
+HTTPS mirror prefix (default https://gh-proxy/). Only GitHub downloads use it.`;
 
 /**
  * Parse CLI flags.
  * @param {string[]} argv
- * @returns {{concurrency:number, force:boolean, offline:boolean, dryRun:boolean, refreshIndex:boolean, prune:boolean, help:boolean}}
+ * @returns {{concurrency:number, force:boolean, offline:boolean, dryRun:boolean, refreshIndex:boolean, prune:boolean, help:boolean, source:string}}
  */
 function parseArgs(argv) {
-  const o = { concurrency: 16, force: false, offline: false, dryRun: false, refreshIndex: false, prune: false, help: false };
+  const o = { concurrency: 16, force: false, offline: false, dryRun: false, refreshIndex: false, prune: false, help: false, source: process.env.SP_ASSET_SOURCE || 'auto' };
   for (const a of argv) {
     const [k, v] = a.split('=');
     if (k === '--concurrency') o.concurrency = Math.max(1, Math.min(64, parseInt(v, 10) || 16));
+    else if (k === '--asset-source') o.source = v;
     else if (k === '--force') o.force = true;
     else if (k === '--offline') o.offline = true;
     else if (k === '--dry-run') o.dryRun = true;
@@ -60,6 +66,7 @@ function parseArgs(argv) {
     else if (k === '--help' || k === '-h') o.help = true;
     else throw new Error(`unknown option ${a}\n${HELP}`);
   }
+  if (!o.help) validateSource(o.source);
   return o;
 }
 
@@ -149,7 +156,10 @@ async function main() {
     readJson('docs/research/05-enemies.json'),
     readJson('docs/research/05-maps.json'),
   ]);
-  const { audioData, modelsData } = await loadIndexes(ROOT, { refresh: opts.refreshIndex && !opts.offline, offline: opts.offline, log });
+  const proxyPrefix = normalizeProxyPrefix(process.env.SP_GITHUB_PROXY);
+  const source = await selectDownloadSource({ mode: opts.source, offline: opts.offline, log });
+  const network = { source, proxyPrefix };
+  const { audioData, modelsData } = await loadIndexes(ROOT, { refresh: opts.refreshIndex && !opts.offline, offline: opts.offline, log, ...network });
   const audio = indexAudio(audioData);
   // The game data built by tools/build-data.mjs (when present) may reference more
   // spawnable enemies/tokens than research lists (e.g. 机变 enemy swaps): cover them too.
@@ -175,7 +185,7 @@ async function main() {
 
   const dl = new Downloader({
     root: ASSETS, ledgerPath: join(CACHE, 'assets-ledger.json'),
-    concurrency: opts.concurrency, force: opts.force, log,
+    concurrency: opts.concurrency, force: opts.force, log, ...network,
   });
   await dl.loadLedger();
   const downloadErrors = opts.offline ? [] : await downloadLeaves(leaves, dl, ASSETS, 'files');
@@ -183,7 +193,7 @@ async function main() {
   // Fonts
   let fontErrors = [];
   if (!opts.offline) {
-    const fdl = new Downloader({ root: FONTS, ledgerPath: join(CACHE, 'fonts-ledger.json'), concurrency: 4, force: opts.force, log });
+    const fdl = new Downloader({ root: FONTS, ledgerPath: join(CACHE, 'fonts-ledger.json'), concurrency: 4, force: opts.force, log, ...network });
     await fdl.loadLedger();
     await fdl.run(fontJobs(), 'fonts');
     dl.totals.bytesDownloaded += fdl.totals.bytesDownloaded;
@@ -198,7 +208,7 @@ async function main() {
   });
 
   // Manifest
-  const resolved = resolveTemplate(plan.template, { root: ASSETS, spine: spine.entries, sourceOf: (rel) => dl.ledger.files[rel]?.url });
+  const resolved = resolveTemplate(plan.template, { root: ASSETS, spine: spine.entries, sourceOf: (rel) => dl.ledger.files[rel]?.url, proxyPrefix });
   const body = resolved.value;
   tidyManifest(body);
   const fontFaces = {};

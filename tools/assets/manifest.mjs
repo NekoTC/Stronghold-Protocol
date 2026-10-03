@@ -6,7 +6,7 @@
 import { existsSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { assetUrl, mirrorUrl } from './sources.mjs';
+import { assetUrl, downloadUrls } from './sources.mjs';
 
 /** Manifest schema version (bump on breaking shape changes). */
 export const MANIFEST_VERSION = 1;
@@ -70,9 +70,10 @@ export async function downloadLeaves(leaves, dl, root, label = 'files') {
  * @param {Map<string, any>} o.spine resolved Spine entries by model key
  * @param {(rel:string)=>string|undefined} [o.sourceOf] URL a file was downloaded from (ledger), to report
  *   fallbacks that share the primary's path (e.g. an enemy icon taken from its base id)
+ * @param {string} [o.proxyPrefix] configured GitHub proxy prefix
  * @returns {{ value: any, misses: string[], fallbacks: string[], files: Set<string> }}
  */
-export function resolveTemplate(template, { root, spine, sourceOf = () => undefined }) {
+export function resolveTemplate(template, { root, spine, sourceOf = () => undefined, proxyPrefix }) {
   const misses = [];
   const fallbacks = [];
   const files = new Set();
@@ -83,7 +84,7 @@ export function resolveTemplate(template, { root, spine, sourceOf = () => undefi
         const a = node.alts[i];
         if (existsSync(join(root, a.rel))) {
           const src = sourceOf(a.rel);
-          const primary = node.alts[0].urls.flatMap((u) => [u, mirrorUrl(u)]);
+          const primary = node.alts[0].urls.flatMap((u) => downloadUrls(u, { proxyPrefix }));
           if (i > 0) fallbacks.push(`${path} ← ${src || a.urls[0]}`);
           else if (src && !primary.includes(src)) fallbacks.push(`${path} ← ${src}`);
           files.add(a.rel);

@@ -6,7 +6,7 @@
 // - Per source: up to `retries` attempts with exponential backoff on network
 //   errors, timeouts, 403/429/5xx and payloads that fail format validation;
 //   a 404/410 moves on immediately. Sources: each candidate URL, then its
-//   jsDelivr mirror (sources.mirrorUrl).
+//   region-selected prefix proxy and jsDelivr mirror (sources.downloadUrls).
 // - Idempotent: an existing file is kept when its size matches the ledger entry
 //   of a previous download or the expected byte count from research, or (when
 //   neither is known) when it passes format validation. The ledger lives in
@@ -14,7 +14,7 @@
 
 import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { mirrorUrl } from './sources.mjs';
+import { downloadUrls, DEFAULT_GITHUB_PROXY } from './sources.mjs';
 import { validate } from './formats.mjs';
 
 /**
@@ -42,8 +42,10 @@ export class Downloader {
    * @param {(msg:string)=>void} [o.log]
    * @param {typeof fetch} [o.fetchImpl]
    * @param {number} [o.backoffMs] base retry delay (doubles per attempt)
+   * @param {'direct'|'mirror'} [o.source] preferred download source
+   * @param {string} [o.proxyPrefix] HTTPS prefix for GitHub downloads
    */
-  constructor({ root, ledgerPath, concurrency = 16, retries = 3, timeoutMs = 120000, force = false, log = console.log, fetchImpl = globalThis.fetch, backoffMs = 400 }) {
+  constructor({ root, ledgerPath, concurrency = 16, retries = 3, timeoutMs = 120000, force = false, log = console.log, fetchImpl = globalThis.fetch, backoffMs = 400, source = 'direct', proxyPrefix = DEFAULT_GITHUB_PROXY }) {
     this.root = root;
     this.ledgerPath = ledgerPath;
     this.concurrency = Math.max(1, Math.min(64, Number(concurrency) || 16));
@@ -52,6 +54,8 @@ export class Downloader {
     this.force = force;
     this.log = log;
     this.fetch = fetchImpl;
+    this.source = source;
+    this.proxyPrefix = proxyPrefix;
     this.backoffMs = Math.max(0, Number(backoffMs) || 0);
     this.ledger = { files: {} };
     this.totals = { ok: 0, skip: 0, miss: 0, error: 0, bytesDownloaded: 0, sizeChanged: 0 };
@@ -146,7 +150,7 @@ export class Downloader {
     if (kept >= 0) return { status: 'skip', bytes: kept };
     let lastError = null;
     for (const url of job.urls) {
-      const sources = [url, mirrorUrl(url)].filter(Boolean);
+      const sources = downloadUrls(url, this);
       for (const src of sources) {
         const r = await this.fetchWithRetries(src, job.kind);
         if (r.notFound) continue;
