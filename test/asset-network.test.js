@@ -11,7 +11,7 @@ import { cachedJson, loadIndexes } from '../tools/assets/cache.mjs';
 import { resolveTemplate } from '../tools/assets/manifest.mjs';
 
 const RAW = 'https://raw.githubusercontent.com/o/r/main/a.json';
-const PROXY = 'https://gh-proxy/' + RAW;
+const PROXY = 'https://gh-proxy.com/' + RAW;
 const CDN = 'https://cdn.jsdelivr.net/gh/o/r@main/a.json';
 const quiet = () => {};
 
@@ -77,13 +77,13 @@ test('URL order, voice support, custom prefix, and no double prefix', () => {
   assert.deepEqual(downloadUrls(RAW, { source: 'mirror' }), [PROXY, RAW, CDN]);
   assert.deepEqual(downloadUrls(RAW), [RAW, CDN, PROXY]);
   const voice = 'https://raw.githubusercontent.com/ArknightsAssets/ArknightsAssets2/voice/assets/x.mp3';
-  assert.deepEqual(downloadUrls(voice, { source: 'mirror' }), ['https://gh-proxy/' + voice, voice]);
+  assert.deepEqual(downloadUrls(voice, { source: 'mirror' }), ['https://gh-proxy.com/' + voice, voice]);
   assert.deepEqual(downloadUrls(PROXY, { source: 'mirror' }), [PROXY]);
   for (const url of ['https://example.com/a', 'https://github.com.evil.example/a', 'https://user:secret@github.com/a']) {
     assert.equal(githubProxyUrl(url), null);
   }
   assert.equal(githubProxyUrl(RAW, 'https://mirror.example/prefix'), 'https://mirror.example/prefix/' + RAW);
-  assert.equal(normalizeProxyPrefix(), 'https://gh-proxy/');
+  assert.equal(normalizeProxyPrefix(), 'https://gh-proxy.com/');
   for (const prefix of ['http://mirror.example/', 'https://mirror.example/?q=x', 'https://user:secret@mirror.example/']) {
     assert.throws(() => normalizeProxyPrefix(prefix), /HTTPS URL/);
   }
@@ -122,7 +122,7 @@ test('both indexes use the selected proxy and cached/offline reads make no reque
   const result = await loadIndexes(dir, opts);
   assert.deepEqual(result, { audioData: { index: true }, modelsData: { index: true } });
   assert.equal(calls.length, 2);
-  assert.ok(calls.every((url) => url.startsWith('https://gh-proxy/https://raw.githubusercontent.com/')));
+  assert.ok(calls.every((url) => url.startsWith('https://gh-proxy.com/https://raw.githubusercontent.com/')));
   await loadIndexes(dir, { ...opts, offline: true, refresh: true });
   assert.equal(calls.length, 2);
   assert.deepEqual(JSON.parse(await readFile(join(dir, '.cache', 'ark-models', 'models_data.json'), 'utf8')), { index: true });

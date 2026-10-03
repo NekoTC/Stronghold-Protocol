@@ -40,10 +40,10 @@
 
 Setup 开始下载素材时，默认检测公网出口 IP 所属地区：中国大陆（`CN`）优先使用国内镜像，其他地区优先原始源。检测使用 Cloudflare trace，失败后尝试 ipwho.is，每个服务最多等待 4 秒；检测失败仍继续下载，优先原始源。只显示地区，不保存 IP；使用代理时以出口 IP 为准。`--check`、`--no-assets` 和素材已齐全时不检测；直接运行素材下载器的 `--offline` 也不检测。
 
-镜像方法是在完整 GitHub 链接前加 `https://gh-proxy/`，例如：
+镜像方法是在完整 GitHub 链接前加 `https://gh-proxy.com/`，例如：
 
 ```text
-https://gh-proxy/https://raw.githubusercontent.com/OWNER/REPO/BRANCH/file.png
+https://gh-proxy.com/https://raw.githubusercontent.com/OWNER/REPO/BRANCH/file.png
 ```
 
 镜像优先顺序为「前缀镜像 → 原始源 → jsDelivr」；原始源优先为「原始源 → jsDelivr → 前缀镜像」。索引、图片、Spine、音频和字体都使用此规则（音频 voice 分支跳过 jsDelivr）。保留格式校验、重试和已有文件跳过逻辑；npm / pip 依赖不使用 GitHub 前缀。
@@ -54,7 +54,7 @@ node tools/setup.mjs --asset-source=mirror  # 手动优先国内镜像
 node tools/setup.mjs --asset-source=direct  # 手动优先原始源
 ```
 
-`node tools/fetch-assets.mjs` 同样支持 `--asset-source=auto|direct|mirror`。也可设置环境变量 `SP_ASSET_SOURCE`，命令行优先。默认前缀按配置使用 `https://gh-proxy/`（主机名为 `gh-proxy`，需要本机网络能解析）；若实际镜像服务使用完整域名，通过 `SP_GITHUB_PROXY` 指定，例如 PowerShell 中先设置 `$env:SP_GITHUB_PROXY = 'https://your-mirror.example/'` 再运行 Setup。前缀只处理 GitHub 下载链接，不重复添加。
+`node tools/fetch-assets.mjs` 同样支持 `--asset-source=auto|direct|mirror`。也可设置环境变量 `SP_ASSET_SOURCE`，命令行优先。默认镜像前缀为 `https://gh-proxy.com/`；若需使用其他镜像服务，通过 `SP_GITHUB_PROXY` 指定，例如 PowerShell 中先设置 `$env:SP_GITHUB_PROXY = 'https://your-mirror.example/'` 再运行 Setup。前缀只处理 GitHub 下载链接，不重复添加。
 
 ### 1.2 防火墙
 

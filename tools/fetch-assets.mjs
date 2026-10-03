@@ -45,7 +45,7 @@ const HELP = `Usage: node tools/fetch-assets.mjs [options]
   --prune           delete files under public/assets that the manifest no longer references
   --help            this text
 Environment: SP_ASSET_SOURCE sets the default source; SP_GITHUB_PROXY sets the
-HTTPS mirror prefix (default https://gh-proxy/). Only GitHub downloads use it.`;
+HTTPS mirror prefix (default https://gh-proxy.com/). Only GitHub downloads use it.`;
 
 /**
  * Parse CLI flags.
