@@ -5,7 +5,7 @@
 // not serve the voice branch, but the prefix proxy can still be tried there.
 // See docs/ASSETS.md for the full source list and credits.
 
-export const DEFAULT_GITHUB_PROXY = 'https://gh-proxy/';
+export const DEFAULT_GITHUB_PROXY = 'https://gh-proxy.com/';
 
 export function normalizeProxyPrefix(prefix = DEFAULT_GITHUB_PROXY) {
   const url = new URL(prefix);

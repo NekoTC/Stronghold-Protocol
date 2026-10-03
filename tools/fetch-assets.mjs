@@ -66,7 +66,7 @@ const HELP = `Usage: node tools/fetch-assets.mjs [options]
                     by tools/local-extract/extract.py (public/assets/local/spine/enemy/)
   --help            this text
 Environment: SP_ASSET_SOURCE sets the default source; SP_GITHUB_PROXY sets the
-HTTPS mirror prefix (default https://gh-proxy/). Only GitHub downloads use it.`;
+HTTPS mirror prefix (default https://gh-proxy.com/). Only GitHub downloads use it.`;
 
 /**
  * Parse CLI flags.
