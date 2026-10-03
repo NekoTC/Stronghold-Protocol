@@ -13,9 +13,10 @@
 // that file from the extracted models (after a game update).
 //
 // Idempotent: existing files with the right size are skipped, so re-running is
-// cheap. Downloads use ~16 parallel connections, 3 retries per source and a
-// region-selected GitHub proxy / jsDelivr fallback. Spine atlases get `size:` (and `pma: true` for
-// enemies); every skeleton is parsed to resolve animation roles.
+// cheap. Downloads use ~16 parallel connections, 3 retries per direct source,
+// a jsDelivr fallback and an opt-in GitHub proxy (one short attempt per URL).
+// Spine atlases get `size:` (and `pma: true` for enemies); every skeleton is
+// parsed to resolve animation roles.
 //
 // The committed data/assets.json never shrinks by accident: an entry whose files
 // are missing here is left out of a rebuilt manifest, so a run on a machine where
@@ -33,7 +34,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Downloader } from './assets/downloader.mjs';
-import { selectDownloadSource, validateSource } from './assets/network.mjs';
+import { MirrorPolicy, selectDownloadSource, validateSource } from './assets/network.mjs';
 import { normalizeProxyPrefix } from './assets/sources.mjs';
 import { loadIndexes } from './assets/cache.mjs';
 import { indexAudio } from './assets/audio.mjs';
@@ -53,7 +54,7 @@ const LOCAL_SPINES = join(ROOT, LOCAL_ENEMY_SPINES_FILE);
 
 const HELP = `Usage: node tools/fetch-assets.mjs [options]
   --concurrency=N   parallel downloads (default 16)
-  --asset-source=M  auto (IP detection, default), direct, or mirror
+  --asset-source=M  direct (default) or mirror (opt-in; no public-IP lookup)
   --force           re-download files even when present
   --offline         no network: post-process what is on disk and rebuild data/assets.json
   --dry-run         print the plan and exit
@@ -66,7 +67,9 @@ const HELP = `Usage: node tools/fetch-assets.mjs [options]
                     by tools/local-extract/extract.py (public/assets/local/spine/enemy/)
   --help            this text
 Environment: SP_ASSET_SOURCE sets the default source; SP_GITHUB_PROXY sets the
-HTTPS mirror prefix (default https://gh-proxy.com/). Only GitHub downloads use it.`;
+HTTPS mirror prefix (default https://gh-proxy.com/; empty disables the proxy).
+Mirror attempts have an 8 s timeout and stop for this run after 3 consecutive
+failures. Only explicitly enabled GitHub downloads use the third-party proxy.`;
 
 /**
  * Parse CLI flags.
@@ -74,7 +77,7 @@ HTTPS mirror prefix (default https://gh-proxy.com/). Only GitHub downloads use i
  * @returns {{concurrency:number, force:boolean, offline:boolean, dryRun:boolean, refreshIndex:boolean, prune:boolean, allowShrink:boolean, localSpines:boolean, help:boolean, source:string}}
  */
 export function parseArgs(argv) {
-  const o = { concurrency: 16, force: false, offline: false, dryRun: false, refreshIndex: false, prune: false, allowShrink: false, localSpines: false, help: false, source: process.env.SP_ASSET_SOURCE || 'auto' };
+  const o = { concurrency: 16, force: false, offline: false, dryRun: false, refreshIndex: false, prune: false, allowShrink: false, localSpines: false, help: false, source: process.env.SP_ASSET_SOURCE || 'direct' };
   for (const a of argv) {
     const [k, v] = a.split('=');
     if (k === '--concurrency') o.concurrency = Math.max(1, Math.min(64, parseInt(v, 10) || 16));
@@ -225,9 +228,10 @@ async function main() {
     readJson('docs/research/05-enemies.json'),
     readJson('docs/research/05-maps.json'),
   ]);
-  const proxyPrefix = normalizeProxyPrefix(process.env.SP_GITHUB_PROXY);
+  const proxyPrefix = opts.offline ? '' : normalizeProxyPrefix(process.env.SP_GITHUB_PROXY);
   const source = await selectDownloadSource({ mode: opts.source, offline: opts.offline, log });
-  const network = { source, proxyPrefix };
+  const mirrorPolicy = new MirrorPolicy({ source, proxyPrefix, log });
+  const network = { source, proxyPrefix, mirrorPolicy };
   const { audioData, modelsData } = await loadIndexes(ROOT, { refresh: opts.refreshIndex && !opts.offline, offline: opts.offline, log, ...network });
   const audio = indexAudio(audioData);
   // The game data built by tools/build-data.mjs (when present) may reference more
@@ -279,7 +283,7 @@ async function main() {
   });
 
   // Manifest
-  const resolved = resolveTemplate(plan.template, { root: ASSETS, spine: spine.entries, sourceOf: (rel) => dl.ledger.files[rel]?.url, proxyPrefix });
+  const resolved = resolveTemplate(plan.template, { root: ASSETS, spine: spine.entries, sourceOf: (rel) => dl.ledger.files[rel]?.url });
   const body = resolved.value;
   tidyManifest(body);
   const fontFaces = {};

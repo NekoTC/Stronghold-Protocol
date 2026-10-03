@@ -19,8 +19,9 @@
 // Options:
 //   --check          report only, change nothing (exit 1 when something essential is missing)
 //   --no-assets      skip the art/audio download
-//   --asset-source=M auto (public IP detection, default), direct, or mirror
+//   --asset-source=M direct (default) or mirror (opt-in; no public-IP lookup)
 //                    SP_ASSET_SOURCE sets the default; SP_GITHUB_PROXY sets the HTTPS prefix (https://gh-proxy.com/)
+//                    An empty SP_GITHUB_PROXY disables the proxy, including in mirror mode.
 //   --no-local       skip the local-client detection and extraction
 //   --local          extract from the local client without asking (re-extracts when already done)
 //   --game <dir>     AssetBundle root of the local client (…/StreamingAssets/AB/Windows or PlayCover …/Documents/Bundles)
@@ -321,7 +322,7 @@ function ensureVenv(py, log) {
 // ---------------------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const o = { check: false, assets: true, local: 'ask', game: null, yes: false, quiet: false, help: false, source: process.env.SP_ASSET_SOURCE || 'auto' };
+  const o = { check: false, assets: true, local: 'ask', game: null, yes: false, quiet: false, help: false, source: process.env.SP_ASSET_SOURCE || 'direct' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--check') o.check = true;

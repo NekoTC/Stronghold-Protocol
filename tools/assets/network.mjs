@@ -1,42 +1,62 @@
-// Select a source once per download invocation, using the public egress IP.
-import { isIP } from 'node:net';
+// Explicit download-source selection and one shared policy per asset invocation.
+// Selecting a source never looks up the user's public IP or makes a request.
+import { downloadUrls, githubProxyUrl, normalizeProxyPrefix } from './sources.mjs';
 
 export function validateSource(mode) {
-  if (!['auto', 'direct', 'mirror'].includes(mode)) throw new Error(`unknown asset source: ${mode} (auto|direct|mirror)`);
+  if (!['direct', 'mirror'].includes(mode)) throw new Error(`unknown asset source: ${mode} (direct|mirror)`);
   return mode;
 }
 
-/** No IP is persisted. Explicit choices and offline invocations make no lookup. */
-export async function selectDownloadSource({ mode = 'auto', offline = false, fetchImpl = globalThis.fetch, timeoutMs = 4000, log = console.log } = {}) {
+export async function selectDownloadSource({ mode = 'direct', offline = false, log = console.log } = {}) {
   validateSource(mode);
   if (offline) return 'direct';
-  if (mode !== 'auto') {
-    log(`[network] 手动选择：${mode === 'mirror' ? '国内镜像优先' : '原始源优先'}`);
-    return mode;
+  log(`[network] ${mode === 'mirror' ? '手动开启 GitHub 镜像' : '原始源（未开启 GitHub 镜像）'}`);
+  return mode;
+}
+
+/** Shared by indexes, files, Spine follow-ups and fonts; a tripped mirror stays off. */
+export class MirrorPolicy {
+  constructor({ source = 'direct', proxyPrefix, failureLimit = 3, timeoutMs = 8000, log = console.log } = {}) {
+    this.source = validateSource(source);
+    this.proxyPrefix = normalizeProxyPrefix(proxyPrefix);
+    this.failureLimit = Math.max(1, Number(failureLimit) || 3);
+    this.timeoutMs = Math.max(1, Number(timeoutMs) || 8000);
+    this.log = log;
+    this.failures = 0;
+    this.disabled = false;
+    this.hintShown = false;
+    this.abortMirror = new AbortController();
   }
-  log('[network] 检测公网 IP 所属地区…');
-  const providers = [
-    { url: 'https://www.cloudflare.com/cdn-cgi/trace', parse: async (res) => {
-      const fields = Object.fromEntries((await res.text()).trim().split(/\r?\n/).map((line) => line.split('=')));
-      return { ip: fields.ip, country: fields.loc };
-    } },
-    { url: 'https://ipwho.is/', parse: async (res) => {
-      const data = await res.json();
-      return data.success === true ? { ip: data.ip, country: data.country_code } : {};
-    } },
-  ];
-  for (const provider of providers) {
-    try {
-      const res = await fetchImpl(provider.url, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!res.ok) { await res.body?.cancel(); continue; }
-      const { ip, country } = await provider.parse(res);
-      const code = typeof country === 'string' ? country.trim().toUpperCase() : '';
-      if (typeof ip !== 'string' || !isIP(ip) || !/^[A-Z]{2}$/.test(code) || code === 'XX') continue;
-      const source = code === 'CN' ? 'mirror' : 'direct';
-      log(`[network] IP 地区 ${code}：${source === 'mirror' ? '国内镜像优先' : '原始源优先'}（失败自动回退）`);
-      return source;
-    } catch { /* bounded lookup failure: try the next provider */ }
+
+  urls(url) {
+    return downloadUrls(url, { source: this.disabled ? 'direct' : this.source, proxyPrefix: this.proxyPrefix });
   }
-  log('[network] IP 地区检测未成功：原始源优先，保留镜像回退（可用 --asset-source=mirror 手动选择）。');
-  return 'direct';
+
+  isProxy(url) {
+    return this.source === 'mirror' && !!this.proxyPrefix && url.startsWith(this.proxyPrefix);
+  }
+
+  skip(url) { return this.isProxy(url) && this.disabled; }
+
+  signal(url, timeoutMs) {
+    if (!this.isProxy(url)) return AbortSignal.timeout(timeoutMs);
+    return AbortSignal.any([AbortSignal.timeout(Math.min(timeoutMs, this.timeoutMs)), this.abortMirror.signal]);
+  }
+
+  succeeded(url) {
+    // A success from a request already in flight must not reopen a tripped circuit.
+    if (this.isProxy(url) && !this.disabled) this.failures = 0;
+  }
+
+  failed(url) {
+    if (this.isProxy(url)) {
+      if (this.disabled || ++this.failures < this.failureLimit) return;
+      this.disabled = true;
+      this.log(`[network] GitHub 镜像连续失败 ${this.failures} 次：本次运行停用镜像，继续使用原始源 / jsDelivr。`);
+      this.abortMirror.abort(new Error('GitHub mirror disabled for this run'));
+    } else if (this.source === 'direct' && !this.hintShown && githubProxyUrl(url, this.proxyPrefix)) {
+      this.hintShown = true;
+      this.log('[network] GitHub 下载失败；如需使用第三方镜像，可重新运行并加 --asset-source=mirror（或 SP_ASSET_SOURCE=mirror）。');
+    }
+  }
 }

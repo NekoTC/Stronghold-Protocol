@@ -38,7 +38,7 @@
 
 #### 国内镜像下载
 
-Setup 开始下载素材时，默认检测公网出口 IP 所属地区：中国大陆（`CN`）优先使用国内镜像，其他地区优先原始源。检测使用 Cloudflare trace，失败后尝试 ipwho.is，每个服务最多等待 4 秒；检测失败仍继续下载，优先原始源。只显示地区，不保存 IP；使用代理时以出口 IP 为准。`--check`、`--no-assets` 和素材已齐全时不检测；直接运行素材下载器的 `--offline` 也不检测。
+Setup 默认使用「GitHub 原始源 → jsDelivr」，不查询公网 IP，也不请求 gh-proxy.com。GitHub 下载失败时会提示如何手动开启镜像；仅添加提示，不自动切换到第三方代理。
 
 镜像方法是在完整 GitHub 链接前加 `https://gh-proxy.com/`，例如：
 
@@ -46,15 +46,19 @@ Setup 开始下载素材时，默认检测公网出口 IP 所属地区：中国�
 https://gh-proxy.com/https://raw.githubusercontent.com/OWNER/REPO/BRANCH/file.png
 ```
 
-镜像优先顺序为「前缀镜像 → 原始源 → jsDelivr」；原始源优先为「原始源 → jsDelivr → 前缀镜像」。索引、图片、Spine、音频和字体都使用此规则（音频 voice 分支跳过 jsDelivr）。保留格式校验、重试和已有文件跳过逻辑；npm / pip 依赖不使用 GitHub 前缀。
+手动开启后顺序为「前缀镜像 → 原始源 → jsDelivr」。索引、图片、Spine、音频和字体都使用此规则（音频 voice 分支跳过 jsDelivr）。镜像是第三方代理；当前只校验格式和大小，没有内容哈希校验，请自行决定是否信任并启用。npm / pip 依赖不使用 GitHub 前缀。
 
 ```powershell
-node tools/setup.mjs --asset-source=auto    # 默认：按公网 IP 自动选择
 node tools/setup.mjs --asset-source=mirror  # 手动优先国内镜像
-node tools/setup.mjs --asset-source=direct  # 手动优先原始源
+node tools/setup.mjs --asset-source=direct  # 默认：仅原始源和 jsDelivr，不使用前缀代理
+$env:SP_ASSET_SOURCE = 'mirror'             # 也可用环境变量显式启用
 ```
 
-`node tools/fetch-assets.mjs` 同样支持 `--asset-source=auto|direct|mirror`。也可设置环境变量 `SP_ASSET_SOURCE`，命令行优先。默认镜像前缀为 `https://gh-proxy.com/`；若需使用其他镜像服务，通过 `SP_GITHUB_PROXY` 指定，例如 PowerShell 中先设置 `$env:SP_GITHUB_PROXY = 'https://your-mirror.example/'` 再运行 Setup。前缀只处理 GitHub 下载链接，不重复添加。
+`node tools/fetch-assets.mjs` 同样支持 `--asset-source=direct|mirror`。命令行优先于 `SP_ASSET_SOURCE`。默认镜像前缀为 `https://gh-proxy.com/`，可通过 `SP_GITHUB_PROXY` 指定其他 HTTPS 前缀；仅配置前缀不会启用镜像。将 `SP_GITHUB_PROXY` 设为空字符串（或全空格）可彻底禁用前缀代理，即使选择了 `mirror` 模式；未设置此变量与显式设空不同，前者使用默认前缀。Windows PowerShell 的某些版本会将空值视为删除变量，可设置 `$env:SP_GITHUB_PROXY = ' '` 或使用 `--asset-source=direct` 来明确禁用。前缀只处理 GitHub 下载链接，不重复添加。
+
+镜像请求每个 URL 只尝试一次，连同响应体最多等待 8 秒，失败即尝试原始源。连续 3 次网络错误、HTTP 错误或无效内容会在本次运行中关闭镜像，后续索引、素材和字体共享该状态；正在进行的镜像请求也会中止并回退。成功会清零连续失败次数；404 / 410 是资源不存在，不触发熔断。再次运行脚本会重新尝试手动启用的镜像。原始源的重试、已有文件跳过和 0.1.1 的清单缩减保护保持不变。
+
+从历史下载记录派生的 Spine 补充贴图也按本次设置重新选择来源，禁用后不会沿用旧代理地址。
 
 ### 1.2 防火墙
 
@@ -255,7 +259,7 @@ services:
 | 任何问题 | `node tools/doctor.mjs`：Node 版本、依赖、素材完整性、端口、局域网地址、防火墙、网络类型 |
 | `端口已被占用 / EADDRINUSE` | 已经有一个服务器在运行（自启任务？）或其他程序占用 3000：换端口 `scripts\start-windows.bat --port 3001` |
 | 朋友打不开页面 | 防火墙规则 / 网络类型（1.2）；确认用的是 `LAN` 地址而不是 `localhost`；访客 Wi-Fi 常开启「AP 隔离」；不在同一网络请看第 2 节 |
-| 画面是占位图、没有声音 | 素材没下完：重新运行 `node tools/setup.mjs`（会续传）；缺失明细在 `.cache/assets-report.json`。下载源按公网 IP 自动选择并回退；可用 `--asset-source=mirror` 手动优先国内镜像（见上文） |
+| 画面是占位图、没有声音 | 素材没下完：重新运行 `node tools/setup.mjs`（会续传）；缺失明细在 `.cache/assets-report.json`。默认仅原始源和 jsDelivr；可用 `--asset-source=mirror` 手动开启前缀镜像（见上文） |
 | 素材下载很慢 / 失败 | 网络问题可随时中断，重新运行会跳过已完成的文件；`node tools/fetch-assets.mjs --concurrency=4` 降低并发。有文件没下载成功时，素材清单 `data/assets.json` 保持不变（脚本列出缺少的条目并以非零状态结束；游戏里缺的图片用占位图，缺的声音不播放），重新运行即可补齐 |
 | 本地提取失败 | 不影响游戏。确认客户端已下载全部资源；Python 版本太新导致依赖安装失败时，安装 Python 3.12 后删除 `.venv-extract` 再运行 `node tools/setup.mjs --local` |
 | 3D 棋盘没出现 | 需要本地提取的棋盘贴图（`node tools/doctor.mjs` 会显示「3D 棋盘可用」），以及支持 WebGL2 的浏览器 |
