@@ -192,7 +192,7 @@ function wireNet() {
     const cur = store.get().connection;
     store.set({
       connection: {
-        status: snap.status, ping: snap.ping, attempt: snap.attempt, retryAt: snap.retryAt,
+        status: snap.status, ping: snap.ping, onlineCount: snap.onlineCount, attempt: snap.attempt, retryAt: snap.retryAt,
         lastError: snap.lastError, everOnline: cur.everOnline || snap.status === 'online',
       },
     });
