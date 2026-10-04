@@ -1,5 +1,5 @@
-const CACHE='stronghold-shell-v1';
+const CACHE='stronghold-shell-v2';
 const SHELL=['/','/manifest.webmanifest','/css/theme.css','/css/components.css','/css/devices.css','/js/main.js','/js/store.js','/js/net.js','/js/data.js','/js/assets.js','/vendor/preact.module.js','/vendor/hooks.module.js','/vendor/htm.module.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
-self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const key of await caches.keys())if(key.startsWith('stronghold-shell-')&&key!==CACHE)await caches.delete(key);await self.clients.claim();})()));
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET'||new URL(r.url).origin!==self.location.origin)return;e.respondWith((async()=>{const c=await caches.match(r);if(c)return c;try{const x=await fetch(r),p=new URL(r.url).pathname;if(x.ok&&(r.destination==='script'||r.destination==='style'||r.destination==='font'||r.destination==='image'||p.startsWith('/data/')))caches.open(CACHE).then(c=>c.put(r,x.clone())).catch(()=>{});return x;}catch{return r.mode==='navigate'?(await caches.match('/')):new Response('',{status:504});}})());});
