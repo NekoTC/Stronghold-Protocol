@@ -96,6 +96,7 @@ export const store = createStore(initialState);
  */
 export function selectRoute(s) {
   if (!s?.session?.entered) return 'title';
+  if (s.room?.local) return 'local';
   const phase = s.match?.public?.phase;
   if (phase && phase !== PHASE.LOBBY) return 'game';
   if (s.room?.inMatch) return 'game'; // match starting: m.public is on its way

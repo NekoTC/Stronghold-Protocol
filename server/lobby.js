@@ -181,6 +181,7 @@ export class Lobby {
     this.opts = { ...LOBBY_DEFAULTS, ...options };
     /** @type {Map<string, Room>} */
     this.rooms = new Map();
+    this.matchQueue = new Map();
     /** @type {Map<string, NodeJS.Timeout>} lobby grace timers by playerId */
     this.graceTimers = new Map();
     /** @type {Map<string, NodeJS.Timeout>} deferred (coalesced) resyncs by playerId */
@@ -251,6 +252,7 @@ export class Lobby {
   onMessage(session, msg) {
     switch (msg.t) {
       case 'room.create': return this.create(session, msg);
+      case 'room.matchmake': return this.matchmake(session, msg);
       case 'room.join': return this.join(session, msg);
       case 'room.leave': return this.leave(session);
       case 'room.ready': return this.ready(session, msg);
@@ -353,6 +355,24 @@ export class Lobby {
     session.pendingResult = null;
     if (!room.hostId) room.hostId = session.playerId;
     this.broadcastState(room);
+    return OK;
+  }
+
+  matchmake(session, { difficulty }) {
+    const cur = this.roomOf(session);
+    if (cur?.match) return fail(ERR.ROOM_STARTED);
+    const key = String(difficulty);
+    const waiting = this.matchQueue.get(key) || [];
+    const other = waiting.shift();
+    if (waiting.length) this.matchQueue.set(key, waiting); else this.matchQueue.delete(key);
+    if (other && this.registry.byId(other.playerId)?.connected) {
+      const result = this.create(session, { mode: 'coop', difficulty });
+      const room = this.roomOf(session);
+      if (room) this.join(other, { code: room.code });
+      return result;
+    }
+    waiting.push({ playerId: session.playerId });
+    this.matchQueue.set(key, waiting);
     return OK;
   }
 

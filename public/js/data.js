@@ -96,7 +96,7 @@ const transientFailure = (err) => {
  * @param {{ fetch?: typeof fetch, base?: string, retryDelays?: number[], wait?: (ms: number) => Promise<void> }} [opts]
  */
 export function createDataStore(opts = {}) {
-  const base = opts.base ?? '/data/';
+  const base = opts.base ?? globalThis.__SP_RUNTIME__?.dataBase ?? '/data/';
   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
   const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : RETRY_DELAYS_MS;
   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));

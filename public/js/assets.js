@@ -644,8 +644,9 @@ const transientFetch = (err) => {
  */
 export function createAssets(options) {
   const opts = options && typeof options === 'object' ? options : {};
-  const url = opts.url || '/data/assets.json';
-  const localUrl = opts.localUrl || '/data/local-assets.json';
+  const assetBase = () => String(globalThis.__SP_RUNTIME__?.assetBase || '').replace(/\/$/, '');
+  const url = opts.url || `${assetBase()}/data/assets.json`;
+  const localUrl = opts.localUrl || `${assetBase()}/data/local-assets.json`;
   let localPromise = isObj(opts.localManifest) ? Promise.resolve(opts.localManifest) : null;
   let localManifest = isObj(opts.localManifest) ? opts.localManifest : null;
   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));

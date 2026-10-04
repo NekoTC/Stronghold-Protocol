@@ -16,6 +16,7 @@ import { LoadoutButton } from './loadout.js';
 import { net, identity } from '../net.js';
 import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
 import { getConfig, getMode, getStage, useData } from '../data.js';
+import { startLocalSolo } from './localSolo.js';
 
 /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
 export const MODE_TEXT = {
@@ -244,7 +245,8 @@ export function LobbyScreen() {
       if (alive.current) setBusy(null);
     }
   };
-  const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
+  const create = () => roomMode === 'solo' && !online ? startLocalSolo(difficulty) : run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
+  const matchmake = () => run('matchmake', () => net.request('room.matchmake', { difficulty }));
   const join = (c = code) => {
     const k = normalizeCode(c);
     if (!CODE_RE.test(k)) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
@@ -309,15 +311,16 @@ export function LobbyScreen() {
         </div>
         <div class="create-box">
           <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
+            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${roomMode !== 'solo' && !online} onClick=${create}>
               ${roomMode === 'solo' ? '开始独立模拟' : '创建同盟'}
             <//>
           <//>
           <div class="create-box__hint">
             ${online
               ? html`<span>${roomMode === 'solo' ? '创建后即可开始模拟' : '创建后可邀请好友或添加 AI 队友'}</span>`
-              : html`<${Spinner} size="sm" label="CONNECTING" />`}
+              : roomMode === 'solo' ? html`<span>离线缓存可直接开始本地模拟</span>` : html`<${Spinner} size="sm" label="CONNECTING" />`}
           </div>
+          ${roomMode === 'coop' && online ? html`<${Button} variant="secondary" block=${true} icon="users" loading=${busy === 'matchmake'} onClick=${matchmake}>多人匹配<//>` : null}
         </div>
       </section>
     </div>

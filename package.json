@@ -29,6 +29,7 @@
     "vendor": "node tools/vendor.mjs",
     "build-data": "node tools/build-data.mjs",
     "assets": "node tools/vendor.mjs && node tools/fetch-assets.mjs",
+    "assets:upload": "node tools/upload-assets.mjs",
     "postinstall": "node tools/vendor.mjs",
     "setup": "node tools/setup.mjs",
     "doctor": "node tools/doctor.mjs",

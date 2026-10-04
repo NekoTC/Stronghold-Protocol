@@ -599,6 +599,11 @@ export async function startServer(opts = {}) {
       });
       return;
     }
+    if (parts.rawPath === '/runtime-config.json') {
+      const assetBase = String(process.env.SP_ASSET_BASE_URL || '').replace(/\/$/, '');
+      sendJson(req, res, 200, { version: 1, assetBase, dataBase: assetBase ? `${assetBase}/data/` : '/data/' });
+      return;
+    }
     await serveStatic(req, res, parts.rawPath, parts.query);
   }
 
