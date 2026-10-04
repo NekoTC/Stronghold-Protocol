@@ -96,6 +96,10 @@ export function parseArgs(argv) {
   return o;
 }
 
+export function resolveProxyPrefix(source, offline = false, value = process.env.SP_GITHUB_PROXY) {
+  return offline || source !== 'mirror' ? '' : normalizeProxyPrefix(value);
+}
+
 /**
  * The shrink guard of data/assets.json (header): the entries of the current manifest `prev` that `next` would drop,
  * and whether `next` may be written — always when nothing is dropped (or there is no current manifest), otherwise
@@ -228,8 +232,8 @@ async function main() {
     readJson('docs/research/05-enemies.json'),
     readJson('docs/research/05-maps.json'),
   ]);
-  const proxyPrefix = opts.offline ? '' : normalizeProxyPrefix(process.env.SP_GITHUB_PROXY);
-  const source = await selectDownloadSource({ mode: opts.source, offline: opts.offline, log });
+  const proxyPrefix = resolveProxyPrefix(opts.source, opts.offline);
+  const source = await selectDownloadSource({ mode: opts.source, offline: opts.offline, proxyPrefix, log });
   const mirrorPolicy = new MirrorPolicy({ source, proxyPrefix, log });
   const network = { source, proxyPrefix, mirrorPolicy };
   const { audioData, modelsData } = await loadIndexes(ROOT, { refresh: opts.refreshIndex && !opts.offline, offline: opts.offline, log, ...network });

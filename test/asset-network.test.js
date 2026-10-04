@@ -33,6 +33,13 @@ test('default, manual source and offline mode perform no public IP lookup', asyn
   assert.equal(fetch.mock.callCount(), 0);
 });
 
+test('mirror startup log names its proxy and states the validation scope', async () => {
+  const logs = [];
+  assert.equal(await selectDownloadSource({ mode: 'mirror', proxyPrefix: 'https://mirror.example/p/', log: (msg) => logs.push(msg) }), 'mirror');
+  assert.match(logs[0], /https:\/\/mirror\.example\/p\//);
+  assert.match(logs[0], /仅校验格式和大小/);
+});
+
 test('URL order, voice support, custom prefix, and no double prefix', () => {
   assert.deepEqual(downloadUrls(RAW, { source: 'mirror' }), [PROXY, RAW, CDN]);
   assert.deepEqual(downloadUrls(RAW), [RAW, CDN]);
@@ -135,7 +142,7 @@ test('index proxy miss falls back to raw', async (t) => {
   assert.deepEqual(calls, [PROXY, RAW]);
 });
 
-test('direct failures give one opt-in hint and never contact the prefix proxy', async (t) => {
+test('direct retries that recover do not print a failure hint or contact the prefix proxy', async (t) => {
   const dir = await fixture(t);
   const calls = [];
   const logs = [];
@@ -147,10 +154,10 @@ test('direct failures give one opt-in hint and never contact the prefix proxy', 
   await dl.run([1, 2].map((i) => ({ rel: `${i}.json`, urls: [RAW + i], kind: 'json' })));
   assert.equal(calls.length, 4);
   assert.ok(calls.every((url) => url.startsWith('https://raw.githubusercontent.com/') || url.startsWith('https://cdn.jsdelivr.net/')));
-  assert.equal(logs.filter((msg) => msg.includes('--asset-source=mirror')).length, 1);
+  assert.equal(logs.filter((msg) => msg.includes('--asset-source=mirror')).length, 0);
 });
 
-test('default index failures only retry raw then jsDelivr, with one opt-in hint', async (t) => {
+test('default index retries that fall back successfully do not print a failure hint', async (t) => {
   const dir = await fixture(t);
   const calls = [];
   const logs = [];
@@ -161,7 +168,7 @@ test('default index failures only retry raw then jsDelivr, with one opt-in hint'
     } });
   assert.deepEqual(result, { ok: true });
   assert.deepEqual(calls, [RAW, RAW, RAW, CDN]);
-  assert.equal(logs.filter((msg) => msg.includes('--asset-source=mirror')).length, 1);
+  assert.equal(logs.filter((msg) => msg.includes('--asset-source=mirror')).length, 0);
 });
 
 test('empty proxy setting disables every downloader and index proxy request in mirror mode', async (t) => {
@@ -261,7 +268,7 @@ test('opening the circuit aborts concurrent proxy work and later jobs go direct'
   assert.equal(dl.totals.ok, 5);
 });
 
-test('the short proxy deadline covers stalled response bodies for indexes and files', async (t) => {
+test('the mirror body idle deadline covers stalled response bodies for indexes and files', async (t) => {
   const dir = await fixture(t);
   const server = createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -285,7 +292,37 @@ test('the short proxy deadline covers stalled response bodies for indexes and fi
   await dl.run([1, 2].map((i) => ({ rel: `${i}.json`, urls: [RAW + i], kind: 'json' })));
   assert.equal(proxyCalls, 2);
   assert.equal(dl.totals.ok, 2);
-  assert.ok(Date.now() - started < 4000, 'body reads share the short mirror timeout');
+  assert.ok(Date.now() - started < 4000, 'stalled body reads time out instead of waiting indefinitely');
+});
+
+test('mirror header timeout does not cap a steadily streaming index or asset body', async (t) => {
+  const dir = await fixture(t);
+  const payload = Buffer.from('{"streamed":true}');
+  const delayedResponse = () => {
+    let offset = 0;
+    let timer;
+    return new Response(new ReadableStream({
+      start(controller) {
+        timer = setInterval(() => {
+          if (offset >= payload.length) {
+            clearInterval(timer);
+            controller.close();
+            return;
+          }
+          controller.enqueue(payload.subarray(offset, ++offset));
+        }, 20);
+      },
+      cancel() { clearInterval(timer); },
+    }), { headers: { 'content-type': 'application/json', 'content-length': String(payload.length) } });
+  };
+  const mirrorPolicy = new MirrorPolicy({ source: 'mirror', timeoutMs: 100, log: quiet });
+  const opts = { mirrorPolicy, log: quiet, fetchImpl: async (url) => url.startsWith('https://gh-proxy.com/') ? delayedResponse() : Response.json({ direct: true }) };
+  const started = Date.now();
+  assert.deepEqual(await cachedJson({ cacheFile: join(dir, 'index.json'), url: RAW, ...opts }), { streamed: true });
+  const dl = new Downloader({ root: join(dir, 'assets'), ledgerPath: join(dir, 'ledger.json'), ...opts });
+  const result = await dl.run([{ rel: 'slow.json', urls: [RAW], kind: 'json' }]);
+  assert.equal(result.get('slow.json').status, 'ok');
+  assert.ok(Date.now() - started > 100, 'the body takes longer than the header deadline while making progress');
 });
 
 test('CLI source defaults to direct and retains the 0.1.1 shrink/local-spine flags', async () => {
@@ -304,6 +341,14 @@ test('CLI source defaults to direct and retains the 0.1.1 shrink/local-spine fla
     if (old === undefined) delete process.env.SP_ASSET_SOURCE;
     else process.env.SP_ASSET_SOURCE = old;
   }
+});
+
+test('SP_GITHUB_PROXY is parsed only for online mirror mode', async () => {
+  const { resolveProxyPrefix } = await import('../tools/fetch-assets.mjs');
+  assert.equal(resolveProxyPrefix('direct', false, 'not-an-https-url'), '');
+  assert.equal(resolveProxyPrefix('mirror', true, 'not-an-https-url'), '');
+  assert.equal(resolveProxyPrefix('mirror', false, ''), '');
+  assert.throws(() => resolveProxyPrefix('mirror', false, 'not-an-https-url'), /Invalid URL/);
 });
 
 test('setup and asset CLI document and validate source options before doing work', () => {

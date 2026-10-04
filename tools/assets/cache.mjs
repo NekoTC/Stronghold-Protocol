@@ -39,7 +39,7 @@ export async function cachedJson({ cacheFile, url, refresh = false, offline = fa
       let text, json;
       try {
         log(`[cache] downloading ${src}`);
-        const res = await fetchImpl(src, { signal: network.signal(src, timeoutMs) });
+        const res = await network.request(src, fetchImpl, {}, timeoutMs);
         if (!res.ok) {
           await res.body?.cancel();
           if (res.status === 404 || res.status === 410) {
@@ -49,7 +49,7 @@ export async function cachedJson({ cacheFile, url, refresh = false, offline = fa
           }
           throw new Error(`HTTP ${res.status}`);
         }
-        text = await res.text();
+        text = (await network.readBody(src, res)).toString('utf8');
         json = JSON.parse(text);
       } catch (e) {
         lastErr = e;
@@ -65,6 +65,7 @@ export async function cachedJson({ cacheFile, url, refresh = false, offline = fa
       return json;
     }
   }
+  if (lastErr) network.directFailureHint();
   throw new Error(`cannot fetch ${url}: ${lastErr?.message}`);
 }
 

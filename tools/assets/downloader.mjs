@@ -114,11 +114,10 @@ export class Downloader {
     const attempts = this.network.isProxy(url) ? 1 : this.retries;
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        const res = await this.fetch(url, {
+        const res = await this.network.request(url, this.fetch, {
           headers: { 'user-agent': 'stronghold-protocol-fetch-assets/1.0' },
-          signal: this.network.signal(url, this.timeoutMs),
           redirect: 'follow',
-        });
+        }, this.timeoutMs);
         if (res.status === 404 || res.status === 410) {
           try { await res.body?.cancel(); } catch { /* ignore */ }
           this.network.succeeded(url); // a missing asset is not a proxy outage
@@ -128,7 +127,7 @@ export class Downloader {
           try { await res.body?.cancel(); } catch { /* ignore */ }
           throw new HttpError(res.status, url);
         }
-        const buf = Buffer.from(await res.arrayBuffer());
+        const buf = await this.network.readBody(url, res);
         const len = Number(res.headers.get('content-length'));
         const enc = res.headers.get('content-encoding');
         if (!enc && Number.isFinite(len) && len > 0 && len !== buf.length) {
@@ -177,6 +176,7 @@ export class Downloader {
         return { status: 'ok', bytes: r.buf.length, url: src, sizeChanged };
       }
     }
+    if (lastError) this.network.directFailureHint();
     return lastError ? { status: 'error', bytes: 0, error: lastError } : { status: 'miss', bytes: 0, error: 'not found (404) on all sources' };
   }
 
