@@ -33,8 +33,7 @@
     "postinstall": "node tools/vendor.mjs",
     "setup": "node tools/setup.mjs",
     "doctor": "node tools/doctor.mjs",
-    "launch": "node scripts/launch.mjs",
-    "cos:upload": "node tools/upload-to-cos.mjs"
+    "launch": "node scripts/launch.mjs"
   },
   "engines": {
     "node": ">=22"
