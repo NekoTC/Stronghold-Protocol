@@ -39,7 +39,13 @@ async function walk(dir) {
   return files;
 }
 
-const cos = dryRun ? null : new COS({ SecretId: accessKey, SecretKey: secretKey });
+const cos = dryRun ? null : new COS({ 
+  SecretId: accessKey?.trim(), 
+  SecretKey: secretKey?.trim(),
+  Protocol: "https:",
+  UseAccelerate: false
+});
+
 const jobs = [];
 
 if (!dataOnly) {
@@ -89,8 +95,12 @@ for (const job of jobs) {
   try {
     const body = await readFile(job.file);
     await new Promise((resolve, reject) => {
-      cos.putObject({ Bucket: bucket, Region: region, Key: job.key, Body: body, ContentLength: job.size }, 
-        (err, data) => err ? reject(err) : resolve(data));
+      cos.putObject({ 
+        Bucket: bucket, 
+        Region: region, 
+        Key: job.key, 
+        Body: body
+      }, (err, data) => err ? reject(err) : resolve(data));
     });
     uploaded++;
     if (uploaded % 50 === 0 || uploaded === jobs.length) {
@@ -99,11 +109,12 @@ for (const job of jobs) {
   } catch (err) {
     failed++;
     errors.push({ file: job.rel, error: err.message });
-    console.error("[FAIL] " + job.rel);
+    console.error("[FAIL] " + job.rel + ": " + err.message);
   }
 }
 
 console.log("\nComplete: " + uploaded + " uploaded" + (failed > 0 ? ", " + failed + " failed" : ""));
 if (errors.length > 0) {
+  console.log("\nFailed files:");
   for (const e of errors) console.log("  " + e.file + ": " + e.error);
 }
