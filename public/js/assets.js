@@ -710,11 +710,19 @@ const transientFetch = (err) => {
 export function createAssets(options) {
   const opts = options && typeof options === 'object' ? options : {};
   const assetBase = () => String(globalThis.__SP_RUNTIME__?.assetBase || '').replace(/\/$/, '');
-  const url = opts.url || `${assetBase()}/data/assets.json`;
-  const localUrl = opts.localUrl || `${assetBase()}/data/local-assets.json`;
+  const url = opts.url || '/data/assets.json';
+  const localUrl = opts.localUrl || '/data/local-assets.json';
   let localPromise = isObj(opts.localManifest) ? Promise.resolve(opts.localManifest) : null;
   let localManifest = isObj(opts.localManifest) ? opts.localManifest : null;
   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
+  const cdnManifest = (value) => {
+    const base = assetBase();
+    if (!base || value == null) return value;
+    if (typeof value === 'string') return /^\/(?:assets|fonts)\//.test(value) ? `${base}${value}` : value;
+    if (Array.isArray(value)) return value.map(cdnManifest);
+    if (typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cdnManifest(v)]));
+    return value;
+  };
   let manifest = isObj(opts.manifest) ? opts.manifest : null;
   let readyPromise = manifest ? Promise.resolve(manifest) : null;
   const loadImage = opts.loadImage || loadImageElement;
@@ -769,7 +777,7 @@ export function createAssets(options) {
         for (let attempt = 0; ; attempt++) {
           try {
             const json = await fetchOnce();
-            adopt(json);
+            adopt(cdnManifest(json));
             return manifest;
           } catch (err) {
             if (manifest) return manifest; // seeded meanwhile
@@ -850,7 +858,7 @@ export function createAssets(options) {
           const res = await doFetch(localUrl, { cache: 'no-cache' });
           if (!res || !res.ok) return localManifest;
           const json = await res.json();
-          if (!localManifest && isObj(json) && isObj(json.groups)) { localManifest = json; notify('local'); }
+          if (!localManifest && isObj(json) && isObj(json.groups)) { localManifest = cdnManifest(json); notify('local'); }
         } catch { /* optional art: absent */ }
         return localManifest;
       })();
