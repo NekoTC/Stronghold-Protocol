@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Upload generated public assets to S3-compatible object storage. The game server never proxies these files.
+// Upload generated public assets to Tencent COS. The game server never proxies these files.
 import { readdir, stat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,22 +7,20 @@ import { spawn } from 'node:child_process';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const PUBLIC = join(ROOT, 'public');
-const endpoint = process.env.SP_OBJECT_STORAGE_ENDPOINT;
 const bucket = process.env.SP_OBJECT_STORAGE_BUCKET;
-const region = process.env.SP_OBJECT_STORAGE_REGION || process.env.SP_COS_REGION || 'ap-shanghai';
+const region = process.env.SP_COS_REGION || process.env.SP_OBJECT_STORAGE_REGION || 'ap-shanghai';
 const prefix = (process.env.SP_OBJECT_STORAGE_PREFIX || '').replace(/^\/+|\/+$/g, '');
 const base = (process.env.SP_ASSET_BASE_URL || '').replace(/\/$/, '');
-const concurrency = Math.max(1, Math.min(32, Number(process.env.SP_OBJECT_STORAGE_CONCURRENCY || 8)));
 const flags = new Set(process.argv.slice(2));
 const dryRun = flags.has('--dry-run');
 if (flags.has('--help') || flags.has('-h')) {
-  console.log('Usage: npm run assets:upload -- [--dry-run]\nRequired: SP_OBJECT_STORAGE_ENDPOINT, SP_OBJECT_STORAGE_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY\nOptional: SP_OBJECT_STORAGE_PREFIX, SP_ASSET_BASE_URL, SP_OBJECT_STORAGE_CONCURRENCY');
+  console.log('Usage: npm run assets:upload -- [--dry-run]\nRequired: SP_OBJECT_STORAGE_BUCKET, SP_COS_REGION, TENCENTCLOUD_SECRET_ID, TENCENTCLOUD_SECRET_KEY\nOptional: SP_OBJECT_STORAGE_PREFIX, SP_ASSET_BASE_URL');
   process.exit(0);
 }
-if (!endpoint || !bucket) throw new Error('Set SP_OBJECT_STORAGE_ENDPOINT and SP_OBJECT_STORAGE_BUCKET');
-const accessKey = process.env.AWS_ACCESS_KEY_ID || process.env.TENCENTCLOUD_SECRET_ID;
-const secretKey = process.env.AWS_SECRET_ACCESS_KEY || process.env.TENCENTCLOUD_SECRET_KEY;
-if (!dryRun && (!accessKey || !secretKey)) throw new Error('Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or TENCENTCLOUD_SECRET_ID/TENCENTCLOUD_SECRET_KEY, or use --dry-run');
+if (!bucket) throw new Error('Set SP_OBJECT_STORAGE_BUCKET');
+const accessKey = process.env.TENCENTCLOUD_SECRET_ID;
+const secretKey = process.env.TENCENTCLOUD_SECRET_KEY;
+if (!dryRun && (!accessKey || !secretKey)) throw new Error('Set TENCENTCLOUD_SECRET_ID and TENCENTCLOUD_SECRET_KEY, or use --dry-run');
 
 const files = [];
 async function walk(dir) {
@@ -38,19 +36,22 @@ for (const file of files) {
   const rel = relative(PUBLIC, file).split(sep).join('/');
   if (!rel.startsWith('assets/') && !rel.startsWith('fonts/')) continue;
   const key = `${prefix ? `${prefix}/` : ''}${rel}`;
-  jobs.push({ file, rel, key, size: (await stat(file)).size, url: base ? `${base}/${key}` : `${endpoint.replace(/\/$/, '')}/${bucket}/${key}` });
+  jobs.push({ file, rel, key, size: (await stat(file)).size, url: base ? `${base}/${key}` : `https://${bucket}.cos.${region}.myqcloud.com/${key}` });
 }
-const mime = (file) => ({ '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.html': 'text/html; charset=utf-8', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg' }[file.slice(file.lastIndexOf('.')).toLowerCase()] || 'application/octet-stream');
-const argvFor = (job) => ['s3', 'cp', job.file, `s3://${bucket}/${job.key}`, '--endpoint-url', endpoint, '--region', region, '--only-show-errors', '--cache-control', 'public,max-age=31536000,immutable', '--content-type', mime(job.rel)];
-const run = (argv) => new Promise((resolve, reject) => {
-  if (dryRun) { console.log(`aws ${argv.map((x) => JSON.stringify(x)).join(' ')}`); resolve(); return; }
-  const child = spawn('aws', argv, { cwd: ROOT, env: { ...process.env, AWS_ACCESS_KEY_ID: accessKey, AWS_SECRET_ACCESS_KEY: secretKey }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+const run = (argv, label) => new Promise((resolve, reject) => {
+  if (dryRun) { console.log(`coscmd ${argv.map((x) => JSON.stringify(x)).join(' ')}`); resolve(); return; }
+  const child = spawn('coscmd', argv, { cwd: ROOT, env: process.env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   let err = ''; child.stderr.on('data', (b) => { err += b; });
-  child.on('error', (e) => reject(new Error(`aws CLI unavailable: ${e.message}`)));
-  child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`aws s3 cp failed (${code}): ${err.trim()}`)));
+  child.on('error', (e) => reject(new Error(`coscmd unavailable: ${e.message}`)));
+  child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`${label} failed (${code}): ${err.trim()}`)));
 });
-let cursor = 0;
-async function worker() { while (cursor < jobs.length) { const job = jobs[cursor++]; await run(argvFor(job)); if (!dryRun) console.log(`[assets] uploaded ${job.key}`); } }
-await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
-console.log(`${dryRun ? 'Would upload' : 'Uploaded'} ${jobs.length} files to s3://${bucket}/${prefix}`);
-console.log(JSON.stringify({ bucket, endpoint, region, prefix, baseUrl: base, files: jobs.map(({ rel, key, size, url }) => ({ rel, key, size, url })) }, null, 2));
+const destinations = [...new Set(jobs.map(({ rel }) => rel.split('/')[0]))];
+if (destinations.length) {
+  if (!dryRun) await run(['config', '-a', accessKey, '-s', secretKey, '-b', bucket, '-r', region], 'coscmd config');
+  for (const directory of destinations) {
+    const target = `${prefix ? `${prefix}/` : ''}${directory}`;
+    await run(['upload', '-r', join(PUBLIC, directory), target], `coscmd upload ${directory}`);
+  }
+}
+console.log(`${dryRun ? 'Would upload' : 'Uploaded'} ${jobs.length} files to cos://${bucket}/${prefix || '(root)'}`);
+console.log(JSON.stringify({ bucket, region, prefix, baseUrl: base, files: jobs.map(({ rel, key, size, url }) => ({ rel, key, size, url })) }, null, 2));
