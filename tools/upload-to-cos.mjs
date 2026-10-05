@@ -1,53 +1,32 @@
 #!/usr/bin/env node
-// Upload assets, fonts, and data files to Tencent COS for CDN delivery.
-import { readdir, stat } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { readdir, stat, readFile } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import COS from "cos-nodejs-sdk-v5";
 
-const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const PUBLIC = join(ROOT, 'public');
-const DATA = join(ROOT, 'data');
+const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const PUBLIC = join(ROOT, "public");
+const DATA = join(ROOT, "data");
 const bucket = process.env.SP_OBJECT_STORAGE_BUCKET;
-const region = process.env.SP_COS_REGION || process.env.SP_OBJECT_STORAGE_REGION || 'ap-shanghai';
-const prefix = (process.env.SP_OBJECT_STORAGE_PREFIX || '').replace(/^\/+|\/+$/g, '');
-const assetBase = (process.env.SP_ASSET_BASE_URL || '').replace(/\/$/, '');
-const dataBase = (process.env.SP_DATA_BASE_URL || '').replace(/\/$/, '');
+const region = process.env.SP_COS_REGION || "ap-shanghai";
+const prefix = (process.env.SP_OBJECT_STORAGE_PREFIX || "").replace(/^\/+|\/+$/g, "");
+const assetBase = (process.env.SP_ASSET_BASE_URL || "").replace(/\/$/, "");
+const dataBase = (process.env.SP_DATA_BASE_URL || "").replace(/\/$/, "");
 const flags = new Set(process.argv.slice(2));
-const dryRun = flags.has('--dry-run');
-const skipData = flags.has('--skip-data');
-const dataOnly = flags.has('--data-only');
+const dryRun = flags.has("--dry-run");
+const skipData = flags.has("--skip-data");
+const dataOnly = flags.has("--data-only");
 
-if (flags.has('--help') || flags.has('-h')) {
-  console.log(`Usage: node tools/upload-to-cos.mjs [OPTIONS]
-
-Upload game assets and data files to Tencent Cloud COS.
-
-Options:
-  --dry-run     Show what would be uploaded without uploading
-  --skip-data   Upload only assets/fonts, skip data files
-  --data-only   Upload only data files, skip assets/fonts
-  -h, --help    Show this help
-
-Required environment variables:
-  SP_OBJECT_STORAGE_BUCKET    COS bucket name
-  TENCENTCLOUD_SECRET_ID      Tencent Cloud secret ID
-  TENCENTCLOUD_SECRET_KEY     Tencent Cloud secret key
-
-Optional environment variables:
-  SP_COS_REGION               COS region (default: ap-shanghai)
-  SP_OBJECT_STORAGE_PREFIX    Path prefix in bucket
-  SP_ASSET_BASE_URL           CDN URL for assets/fonts
-  SP_DATA_BASE_URL            CDN URL for data files
-`);
+if (flags.has("--help") || flags.has("-h")) {
+  console.log("Usage: node tools/upload-to-cos.mjs [OPTIONS]\n\nUpload game assets and data files to Tencent Cloud COS.\n\nOptions:\n  --dry-run     Show what would be uploaded\n  --skip-data   Upload only assets/fonts\n  --data-only   Upload only data files\n  -h, --help    Show this help\n\nRequired:\n  SP_OBJECT_STORAGE_BUCKET\n  TENCENTCLOUD_SECRET_ID\n  TENCENTCLOUD_SECRET_KEY\n\nOptional:\n  SP_COS_REGION (default: ap-shanghai)\n  SP_OBJECT_STORAGE_PREFIX\n  SP_ASSET_BASE_URL\n  SP_DATA_BASE_URL");
   process.exit(0);
 }
 
-if (!bucket) throw new Error('Set SP_OBJECT_STORAGE_BUCKET');
+if (!bucket) throw new Error("Set SP_OBJECT_STORAGE_BUCKET");
 const accessKey = process.env.TENCENTCLOUD_SECRET_ID;
 const secretKey = process.env.TENCENTCLOUD_SECRET_KEY;
 if (!dryRun && (!accessKey || !secretKey)) {
-  throw new Error('Set TENCENTCLOUD_SECRET_ID and TENCENTCLOUD_SECRET_KEY, or use --dry-run');
+  throw new Error("Set TENCENTCLOUD_SECRET_ID and TENCENTCLOUD_SECRET_KEY");
 }
 
 async function walk(dir) {
@@ -60,96 +39,71 @@ async function walk(dir) {
   return files;
 }
 
-const run = (argv, label) => new Promise((resolve, reject) => {
-  if (dryRun) {
-    console.log(`coscmd ${argv.map((x) => JSON.stringify(x)).join(' ')}`);
-    resolve();
-    return;
-  }
-  const child = spawn('coscmd', argv, {
-    cwd: ROOT,
-    env: process.env,
-    stdio: ['ignore', 'ignore', 'pipe'],
-    windowsHide: true
-  });
-  let err = '';
-  child.stderr.on('data', (b) => { err += b; });
-  child.on('error', (e) => reject(new Error(`coscmd unavailable: ${e.message}`)));
-  child.on('close', (code) => {
-    if (code === 0) resolve();
-    else reject(new Error(`${label} failed (${code}): ${err.trim()}`));
-  });
-});
-
+const cos = dryRun ? null : new COS({ SecretId: accessKey, SecretKey: secretKey });
 const jobs = [];
 
 if (!dataOnly) {
+  console.log("Collecting assets and fonts...");
   const publicFiles = await walk(PUBLIC);
   for (const file of publicFiles) {
-    const rel = relative(PUBLIC, file).split(sep).join('/');
-    if (!rel.startsWith('assets/') && !rel.startsWith('fonts/')) continue;
-    const key = `${prefix ? `${prefix}/` : ''}${rel}`;
-    const url = assetBase ? `${assetBase}/${rel}` : `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
-    jobs.push({ file, rel, key, size: (await stat(file)).size, url, type: 'asset' });
+    const rel = relative(PUBLIC, file).split(sep).join("/");
+    if (!rel.startsWith("assets/") && !rel.startsWith("fonts/")) continue;
+    const key = prefix ? prefix + "/" + rel : rel;
+    jobs.push({ file, rel, key, size: (await stat(file)).size, type: "asset" });
   }
+  console.log("Found " + jobs.length + " files");
 }
 
-if (!skipData && !dataOnly) {
+if (!skipData) {
+  console.log("Collecting data...");
   const dataFiles = await walk(DATA);
+  const start = jobs.length;
   for (const file of dataFiles) {
-    const rel = relative(DATA, file).split(sep).join('/');
-    if (!rel.endsWith('.json')) continue;
-    const dataKey = `${prefix ? `${prefix}/` : ''}data/${rel}`;
-    const url = dataBase ? `${dataBase}/${rel}` : `https://${bucket}.cos.${region}.myqcloud.com/${dataKey}`;
-    jobs.push({ file, rel: `data/${rel}`, key: dataKey, size: (await stat(file)).size, url, type: 'data' });
+    const rel = relative(DATA, file).split(sep).join("/");
+    if (!rel.endsWith(".json")) continue;
+    const key = (prefix ? prefix + "/" : "") + "data/" + rel;
+    jobs.push({ file, rel: "data/" + rel, key, size: (await stat(file)).size, type: "data" });
   }
-} else if (dataOnly) {
-  const dataFiles = await walk(DATA);
-  for (const file of dataFiles) {
-    const rel = relative(DATA, file).split(sep).join('/');
-    if (!rel.endsWith('.json')) continue;
-    const dataKey = `${prefix ? `${prefix}/` : ''}data/${rel}`;
-    const url = dataBase ? `${dataBase}/${rel}` : `https://${bucket}.cos.${region}.myqcloud.com/${dataKey}`;
-    jobs.push({ file, rel: `data/${rel}`, key: dataKey, size: (await stat(file)).size, url, type: 'data' });
-  }
+  console.log("Found " + (jobs.length - start) + " data files");
 }
 
 if (jobs.length === 0) {
-  console.log('No files to upload');
+  console.log("No files to upload");
   process.exit(0);
 }
 
-if (!dryRun) {
-  await run(['config', '-a', accessKey, '-s', secretKey, '-b', bucket, '-r', region], 'coscmd config');
+console.log("\nTarget: cos://" + bucket + "/" + (prefix || "(root)"));
+console.log("Region: " + region);
+console.log("Total: " + jobs.length + "\n");
+
+if (dryRun) {
+  for (const job of jobs) console.log("  " + job.rel + " -> " + job.key);
+  process.exit(0);
 }
 
-const uploadTasks = new Map();
+let uploaded = 0;
+let failed = 0;
+const errors = [];
+
 for (const job of jobs) {
-  if (job.type === 'asset') {
-    const dir = job.rel.split('/')[0];
-    if (!uploadTasks.has(dir)) uploadTasks.set(dir, { source: join(PUBLIC, dir), target: `${prefix ? `${prefix}/` : ''}${dir}` });
-  } else if (job.type === 'data') {
-    if (!uploadTasks.has('data')) uploadTasks.set('data', { source: DATA, target: `${prefix ? `${prefix}/` : ''}data` });
+  try {
+    const body = await readFile(job.file);
+    await new Promise((resolve, reject) => {
+      cos.putObject({ Bucket: bucket, Region: region, Key: job.key, Body: body, ContentLength: job.size }, 
+        (err, data) => err ? reject(err) : resolve(data));
+    });
+    uploaded++;
+    if (uploaded % 50 === 0 || uploaded === jobs.length) {
+      console.log("[" + uploaded + "/" + jobs.length + "] " + job.rel);
+    }
+  } catch (err) {
+    failed++;
+    errors.push({ file: job.rel, error: err.message });
+    console.error("[FAIL] " + job.rel);
   }
 }
 
-for (const [name, { source, target }] of uploadTasks) {
-  await run(['upload', '-r', source, target], `coscmd upload ${name}`);
+console.log("\nComplete: " + uploaded + " uploaded" + (failed > 0 ? ", " + failed + " failed" : ""));
+if (errors.length > 0) {
+  for (const e of errors) console.log("  " + e.file + ": " + e.error);
 }
-
-const assetCount = jobs.filter(j => j.type === 'asset').length;
-const dataCount = jobs.filter(j => j.type === 'data').length;
-
-console.log(`
-${dryRun ? 'Would upload' : 'Uploaded'} ${jobs.length} files to cos://${bucket}/${prefix || '(root)'}
-  Assets/Fonts: ${assetCount} files
-  Data files:   ${dataCount} files`);
-
-if (assetBase) console.log(`
-Asset CDN: ${assetBase}`);
-if (dataBase) console.log(`Data CDN:  ${dataBase}`);
-
-console.log(`
-Runtime config for deployment:
-  SP_ASSET_BASE_URL="${assetBase || `https://${bucket}.cos.${region}.myqcloud.com${prefix ? '/' + prefix : ''}`}"
-  SP_DATA_BASE_URL="${dataBase || `https://${bucket}.cos.${region}.myqcloud.com${prefix ? '/' + prefix : ''}/data`}"`);
