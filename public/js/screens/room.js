@@ -215,6 +215,7 @@ export function RoomScreen() {
 
   const toggleReady = () => run('ready', () => net.request('room.ready', { ready: !myReady }));
   const start = () => run('start', () => net.request('room.start', {}));
+  const toggleMatchmaking = () => run('matching', () => net.request('room.setMatchmaking', { enabled: !room.matchmaking }));
   const addBot = () => run('add', () => net.request('room.addBot', {}));
   const removeBot = (seat) => run(`rm${seat}`, () => net.request('room.removeBot', { seat }));
   // the host removes a human before the match (community report #17): asked first; the player may join again. The
@@ -316,6 +317,10 @@ export function RoomScreen() {
         <div class="room-bar__status">${statusLine}</div>
       </div>
       <div class="room-bar__right">
+        ${coop && facts.isHost ? html`<${Button} variant="secondary" size="lg" icon="users"
+          active=${!!room.matchmaking} loading=${busy === 'matching'} disabled=${!online || !!busy}
+          onClick=${toggleMatchmaking}>${room.matchmaking ? '关闭匹配' : '开启匹配'}<//>` : null}
+        ${coop && room.matchmaking ? html`<span class="t-mint" role="status">${facts.emptySeats ? '匹配已开启' : '匹配已开启 · 席位已满'}</span>` : null}
         <${LoadoutButton} from="room" size="lg" class="room-loadout" />
         ${facts.isHost
           ? html`<${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>

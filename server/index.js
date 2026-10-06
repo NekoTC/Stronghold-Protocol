@@ -670,6 +670,12 @@ export async function startServer(opts = {}) {
       });
       return;
     }
+    if (parts.rawPath === '/runtime-config.json') {
+      const assetBase = String(process.env.SP_ASSET_BASE_URL || '').replace(/\/$/, '');
+      const dataBase = String(process.env.SP_DATA_BASE_URL || '').replace(/\/$/, '');
+      sendJson(req, res, 200, { version: 1, assetBase, dataBase: dataBase || '/data/' });
+      return;
+    }
     await serveStatic(req, res, parts.rawPath, parts.query);
   }
 

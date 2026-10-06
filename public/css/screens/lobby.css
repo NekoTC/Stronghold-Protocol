@@ -2,6 +2,8 @@
    screens/lobby.css — mode cards (独立/同盟), difficulty cards, create button, join panel.
    ========================================================================================== */
 
+.lobby-screen .topbar__left { flex-wrap: wrap; gap: .1rem; }
+
 .lobby-body {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);

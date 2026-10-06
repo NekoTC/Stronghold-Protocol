@@ -17,6 +17,7 @@
 //     in server/lobby.js. Local / LAN peers without a forwarding header (dev machine, tests, LAN party)
 //     have no key and are never limited per address.
 //   * Heartbeat (ws ping/pong every `heartbeatMs`, dead sockets terminated), hello timeout.
+//   * Server-wide browser presence (`presence { onlineCount }`), pushed on connection/close even before hello.
 //   * Send helpers that never throw, with a backpressure guard: non-critical `b.snap` frames are skipped
 //     while the socket has more than 1 MB queued; a socket with more than 16 MB queued is terminated
 //     (the client reconnects and receives a full state resync).
@@ -480,12 +481,15 @@ class Connection {
     this.drops = 0;
     /** true once the server initiated the close; frames still in flight are ignored */
     this.closing = false;
+    this.onClosing = null;
   }
 
   /** Server-initiated close (never throws). Later frames from this socket are ignored. */
   close(code, reason) {
+    if (this.closing) return;
     this.closing = true;
     try { this.ws.close(code, reason); } catch { /* ignore */ }
+    this.onClosing?.();
   }
 }
 
@@ -524,6 +528,21 @@ export class Network {
   /** Number of open sockets. */
   get connectionCount() { return this.conns.size; }
 
+  /** Connected browser clients, including title-screen visitors; not retained sessions or AI seats. */
+  get onlineCount() {
+    let count = 0;
+    for (const conn of this.conns.values()) if (!conn.closing && conn.ws.readyState === WS_OPEN) count++;
+    return count;
+  }
+
+  /** Push one shared count to every live browser when presence changes (also available before hello). */
+  broadcastPresence() {
+    if (this.closed) return;
+    const onlineCount = this.onlineCount;
+    const data = encode({ t: 'presence', onlineCount });
+    for (const conn of this.conns.values()) if (!conn.closing) sendRaw(conn.ws, data);
+  }
+
   /**
    * Upgrade-time admission check (server/index.js): null to accept, otherwise the reason to refuse.
    * @param {import('node:http').IncomingMessage} req
@@ -546,6 +565,7 @@ export class Network {
   handleConnection(ws, req) {
     if (this.closed) { try { ws.close(CLOSE.SHUTDOWN, 'server shutdown'); } catch { /* ignore */ } return; }
     const conn = new Connection(ws, clientAddress(req, this.opts.trustProxy), this.now(), this.opts);
+    conn.onClosing = () => this.broadcastPresence();
     this.conns.set(ws, conn);
     if (conn.key) this.connsPerKey.set(conn.key, (this.connsPerKey.get(conn.key) || 0) + 1);
     ws.on('message', (data, isBinary) => {
@@ -554,6 +574,7 @@ export class Network {
     ws.on('pong', () => { conn.alive = true; if (conn.session && conn.session.ws === ws) conn.session.lastSeen = this.now(); });
     ws.on('error', (e) => { this.log.debug?.('[net] socket error', e?.code || e?.message); });
     ws.on('close', () => { try { this.onClose(conn); } catch (e) { this.log.error('[net] close handler crashed', e); } });
+    this.broadcastPresence();
   }
 
   /** @param {Connection} conn @param {object} msg */
@@ -681,6 +702,7 @@ export class Network {
       if (n > 0) this.connsPerKey.set(conn.key, n);
       else this.connsPerKey.delete(conn.key);
     }
+    this.broadcastPresence();
     const s = conn.session;
     conn.session = null;
     if (!s || s.ws !== conn.ws) return;

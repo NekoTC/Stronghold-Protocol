@@ -128,6 +128,7 @@ export class Room {
     this.difficulty = difficulty;
     /** @type {string | null} */
     this.hostId = null;
+    this.matchmaking = false;
     /** @type {(Seat | null)[]} */
     this.seats = new Array(MAX_SEATS).fill(null);
     /** @type {{ playerId: string, name: string, connected: boolean }[]} spectator seats, ≤ MAX_SPECTATORS (header) */
@@ -176,6 +177,7 @@ export class Room {
       mode: this.mode,
       difficulty: this.difficulty,
       inMatch: !!this.match,
+      matchmaking: this.matchmaking,
       seats: this.seats.map((s) => (s
         ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left }
         : null)),
@@ -280,6 +282,8 @@ export class Lobby {
   onMessage(session, msg) {
     switch (msg.t) {
       case 'room.create': return this.create(session, msg);
+      case 'room.matchmake': return this.matchmake(session, msg);
+      case 'room.setMatchmaking': return this.setMatchmaking(session, msg);
       case 'room.join': return this.join(session, msg);
       case 'room.leave': return this.leave(session);
       case 'room.ready': return this.ready(session, msg);
@@ -387,6 +391,38 @@ export class Lobby {
     session.pendingResult = null;
     if (!room.hostId) room.hostId = session.playerId;
     this.broadcastState(room);
+    return OK;
+  }
+
+  matchmake(session, { difficulty }) {
+    const cur = this.roomOf(session);
+    if (cur?.match) return fail(ERR.ROOM_STARTED);
+    // Repeated requests must never seat the same session twice or move an existing member.
+    if (cur) {
+      this.sendState(cur, session);
+      return OK;
+    }
+    for (const room of this.rooms.values()) {
+      if (!room.matchmaking || room.disposed || room.match || room.mode !== 'coop'
+        || room.difficulty !== difficulty || room.freeSeat() < 0
+        || !room.seatOf(room.hostId)?.connected) continue;
+      return this.join(session, { code: room.code });
+    }
+    const result = this.create(session, { mode: 'coop', difficulty });
+    if (result.error) return result;
+    return this.setMatchmaking(session, { enabled: true });
+  }
+
+  setMatchmaking(session, { enabled }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode !== 'coop') return fail(ERR.BAD_MSG, 'matchmaking requires co-op');
+    if (room.matchmaking !== enabled) {
+      room.matchmaking = enabled;
+      this.broadcastState(room);
+    }
     return OK;
   }
 
@@ -613,6 +649,7 @@ export class Lobby {
       });
       ctx.match = match;
       room.match = match;
+      room.matchmaking = false;
       room.matchCtx = ctx;
       room.matchKey = key;
       room.replay = null;

@@ -1,7 +1,7 @@
 // Minimal observable store for the browser client.
 //
 // One app-wide store holds everything the UI renders from:
-//   connection  – socket status + latency (fed by net.js via main.js)
+//   connection  – socket status + latency + online count (fed by net.js via main.js)
 //   me          – { playerId, name, token } from `welcome`
 //   session     – { entered } (the player pressed 开始 on the title screen in this tab)
 //   room        – last `room.state` payload (without `t`) or null
@@ -74,7 +74,7 @@ export const emptyMatch = () => ({ public: null, private: null, field: null, res
 
 /** Initial app state (exported for tests and resets). */
 export const initialState = Object.freeze({
-  connection: { status: 'idle', ping: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
+  connection: { status: 'idle', ping: null, onlineCount: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
   me: { playerId: null, name: '', token: null },
   session: { entered: false },
   room: null,
@@ -96,6 +96,7 @@ export const store = createStore(initialState);
  */
 export function selectRoute(s) {
   if (!s?.session?.entered) return 'title';
+  if (s.room?.local) return 'local';
   const phase = s.match?.public?.phase;
   if (phase && phase !== PHASE.LOBBY) return 'game';
   if (s.room?.inMatch) return 'game'; // match starting: m.public is on its way

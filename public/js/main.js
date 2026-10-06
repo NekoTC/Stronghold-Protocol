@@ -26,6 +26,7 @@
 
 // Polyfills first (older Safari / Firefox ESR): every module evaluated after this one sees them.
 import './ui/compat.js';
+import { loadRuntimeConfig } from './runtime.js';
 import { render } from '../vendor/preact.module.js';
 import { useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
@@ -38,6 +39,7 @@ import { GAME_FILES } from './ui/gameComponents.js';
 import { TitleScreen, sanitizeName } from './screens/title.js';
 import { LobbyScreen, rememberRoom, parseRoomParam } from './screens/lobby.js';
 import { RoomScreen } from './screens/room.js';
+import { LocalSoloScreen } from './screens/localSolo.js';
 import { GameScreen } from './screens/game.js';
 import { installAudio } from './audio.js';
 import { settingsStore } from './ui/settings.js';
@@ -52,7 +54,7 @@ const JOIN_DELAY_MS = 350;
 const TICKER_KEEP = 20;
 const EMOTE_KEEP = 20;
 
-const SCREENS = { title: TitleScreen, lobby: LobbyScreen, room: RoomScreen, game: GameScreen };
+const SCREENS = { title: TitleScreen, lobby: LobbyScreen, room: RoomScreen, game: GameScreen, local: LocalSoloScreen };
 
 /** Copy of a server message without transport fields. */
 function payload(msg) {
@@ -193,7 +195,7 @@ function wireNet() {
     const cur = store.get().connection;
     store.set({
       connection: {
-        status: snap.status, ping: snap.ping, attempt: snap.attempt, retryAt: snap.retryAt,
+        status: snap.status, ping: snap.ping, onlineCount: snap.onlineCount, attempt: snap.attempt, retryAt: snap.retryAt,
         lastError: snap.lastError, everOnline: cur.everOnline || snap.status === 'online',
       },
     });
@@ -311,6 +313,8 @@ function installGlobalErrorHandlers() {
 
 async function boot() {
   installGlobalErrorHandlers();
+  globalThis.__SP_RUNTIME__ = await loadRuntimeConfig();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
   // touch / hover / fullscreen classes, zoom-gesture blocking, rotation re-layout (ui/device.js, css/devices.css)
   installDeviceSupport();
   // A page restored from the back/forward cache has a dead socket and a stale token choice: start over.

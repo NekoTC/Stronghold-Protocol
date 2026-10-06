@@ -1,0 +1,17 @@
+export async function loadRuntimeConfig(fetchImpl = globalThis.fetch) {
+  const fallback = {
+    assetBase: '',
+    dataBase: '/data/'
+  };
+  try {
+    const r = await fetchImpl('/runtime-config.json', { cache: 'no-store' });
+    if (!r.ok) return fallback;
+    const v = await r.json();
+    return {
+      assetBase: typeof v?.assetBase === 'string' ? v.assetBase.replace(/\/$/, '') : '',
+      dataBase: typeof v?.dataBase === 'string' ? v.dataBase.replace(/\/$/, '') : '/data/'
+    };
+  } catch {
+    return fallback;
+  }
+}

@@ -1,0 +1,217 @@
+diff --git a/package.json b/package.json
+index 0777c22..3e25124 100644
+--- a/package.json
++++ b/package.json
+@@ -29,6 +29,7 @@
+     "vendor": "node tools/vendor.mjs",
+     "build-data": "node tools/build-data.mjs",
+     "assets": "node tools/vendor.mjs && node tools/fetch-assets.mjs",
++    "assets:upload": "node tools/upload-assets.mjs",
+     "postinstall": "node tools/vendor.mjs",
+     "setup": "node tools/setup.mjs",
+     "doctor": "node tools/doctor.mjs",
+diff --git a/public/index.html b/public/index.html
+index 82a085e..2bf6fb6 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -14,6 +14,7 @@
+   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+   <meta name="apple-mobile-web-app-title" content="卫戍协议" />
+   <meta name="description" content="卫戍协议：盟约 · 网页联机复刻（非官方同人作品）" />
++  <link rel="manifest" href="/manifest.webmanifest" />
+   <title>卫戍协议：盟约 · STRONGHOLD PROTOCOL</title>
+   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230c0f0e'/%3E%3Cpath fill='%234ed8af' d='M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z'/%3E%3C/svg%3E" />
+ 
+diff --git a/public/js/assets.js b/public/js/assets.js
+index 824ab58..b8bb195 100644
+--- a/public/js/assets.js
++++ b/public/js/assets.js
+@@ -541,8 +541,9 @@ export const SPINE_QUIET_DELAY_MS = 3000;
+  */
+ export function createAssets(options) {
+   const opts = options && typeof options === 'object' ? options : {};
+-  const url = opts.url || '/data/assets.json';
+-  const localUrl = opts.localUrl || '/data/local-assets.json';
++  const assetBase = () => String(globalThis.__SP_RUNTIME__?.assetBase || '').replace(/\/$/, '');
++  const url = opts.url || `${assetBase()}/data/assets.json`;
++  const localUrl = opts.localUrl || `${assetBase()}/data/local-assets.json`;
+   let localPromise = isObj(opts.localManifest) ? Promise.resolve(opts.localManifest) : null;
+   let localManifest = isObj(opts.localManifest) ? opts.localManifest : null;
+   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
+diff --git a/public/js/data.js b/public/js/data.js
+index 46ebe6f..ad54c0b 100644
+--- a/public/js/data.js
++++ b/public/js/data.js
+@@ -95,7 +95,7 @@ const transientFailure = (err) => {
+  * @param {{ fetch?: typeof fetch, base?: string, retryDelays?: number[], wait?: (ms: number) => Promise<void> }} [opts]
+  */
+ export function createDataStore(opts = {}) {
+-  const base = opts.base ?? '/data/';
++  const base = opts.base ?? globalThis.__SP_RUNTIME__?.dataBase ?? '/data/';
+   const doFetch = opts.fetch || ((...a) => globalThis.fetch(...a));
+   const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : RETRY_DELAYS_MS;
+   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+diff --git a/public/js/main.js b/public/js/main.js
+index 02dd023..3186aab 100644
+--- a/public/js/main.js
++++ b/public/js/main.js
+@@ -26,6 +26,7 @@
+ 
+ // Polyfills first (older Safari / Firefox ESR): every module evaluated after this one sees them.
+ import './ui/compat.js';
++import { loadRuntimeConfig } from './runtime.js';
+ import { render } from '../vendor/preact.module.js';
+ import { useErrorBoundary } from '../vendor/hooks.module.js';
+ import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
+@@ -38,6 +39,7 @@ import { GAME_FILES } from './ui/gameComponents.js';
+ import { TitleScreen, sanitizeName } from './screens/title.js';
+ import { LobbyScreen, rememberRoom, parseRoomParam } from './screens/lobby.js';
+ import { RoomScreen } from './screens/room.js';
++import { LocalSoloScreen } from './screens/localSolo.js';
+ import { GameScreen } from './screens/game.js';
+ import { installAudio } from './audio.js';
+ import { settingsStore } from './ui/settings.js';
+@@ -51,7 +53,7 @@ const JOIN_DELAY_MS = 350;
+ const TICKER_KEEP = 20;
+ const EMOTE_KEEP = 20;
+ 
+-const SCREENS = { title: TitleScreen, lobby: LobbyScreen, room: RoomScreen, game: GameScreen };
++const SCREENS = { title: TitleScreen, lobby: LobbyScreen, room: RoomScreen, game: GameScreen, local: LocalSoloScreen };
+ 
+ /** Copy of a server message without transport fields. */
+ function payload(msg) {
+@@ -304,6 +306,8 @@ function installGlobalErrorHandlers() {
+ 
+ async function boot() {
+   installGlobalErrorHandlers();
++  globalThis.__SP_RUNTIME__ = await loadRuntimeConfig();
++  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+   // touch / hover / fullscreen classes, zoom-gesture blocking, rotation re-layout (ui/device.js, css/devices.css)
+   installDeviceSupport();
+   // A page restored from the back/forward cache has a dead socket and a stale token choice: start over.
+diff --git a/public/js/screens/lobby.js b/public/js/screens/lobby.js
+index 15e079e..8ff4009 100644
+--- a/public/js/screens/lobby.js
++++ b/public/js/screens/lobby.js
+@@ -16,6 +16,7 @@ import { LoadoutButton } from './loadout.js';
+ import { net, identity } from '../net.js';
+ import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
+ import { getConfig, getMode, getStage, useData } from '../data.js';
++import { startLocalSolo } from './localSolo.js';
+ 
+ /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
+ export const MODE_TEXT = {
+@@ -244,7 +245,8 @@ export function LobbyScreen() {
+       if (alive.current) setBusy(null);
+     }
+   };
+-  const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
++  const create = () => roomMode === 'solo' && !online ? startLocalSolo(difficulty) : run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
++  const matchmake = () => run('matchmake', () => net.request('room.matchmake', { difficulty }));
+   const join = (c = code) => {
+     const k = normalizeCode(c);
+     if (!CODE_RE.test(k)) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
+@@ -309,15 +311,16 @@ export function LobbyScreen() {
+         </div>
+         <div class="create-box">
+           <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
+-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
++            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${roomMode !== 'solo' && !online} onClick=${create}>
+               ${roomMode === 'solo' ? '开始独立模拟' : '创建同盟'}
+             <//>
+           <//>
+           <div class="create-box__hint">
+             ${online
+               ? html`<span>${roomMode === 'solo' ? '创建后即可开始模拟' : '创建后可邀请好友或添加 AI 队友'}</span>`
+-              : html`<${Spinner} size="sm" label="CONNECTING" />`}
++              : roomMode === 'solo' ? html`<span>离线缓存可直接开始本地模拟</span>` : html`<${Spinner} size="sm" label="CONNECTING" />`}
+           </div>
++          ${roomMode === 'coop' && online ? html`<${Button} variant="secondary" block=${true} icon="users" loading=${busy === 'matchmake'} onClick=${matchmake}>多人匹配<//>` : null}
+         </div>
+       </section>
+     </div>
+diff --git a/public/js/store.js b/public/js/store.js
+index bb0b2f5..b9a85ff 100644
+--- a/public/js/store.js
++++ b/public/js/store.js
+@@ -96,6 +96,7 @@ export const store = createStore(initialState);
+  */
+ export function selectRoute(s) {
+   if (!s?.session?.entered) return 'title';
++  if (s.room?.local) return 'local';
+   const phase = s.match?.public?.phase;
+   if (phase && phase !== PHASE.LOBBY) return 'game';
+   if (s.room?.inMatch) return 'game'; // match starting: m.public is on its way
+diff --git a/server/index.js b/server/index.js
+index f1aa652..47021ad 100644
+--- a/server/index.js
++++ b/server/index.js
+@@ -545,6 +545,11 @@ export async function startServer(opts = {}) {
+       });
+       return;
+     }
++    if (parts.rawPath === '/runtime-config.json') {
++      const assetBase = String(process.env.SP_ASSET_BASE_URL || '').replace(/\/$/, '');
++      sendJson(req, res, 200, { version: 1, assetBase, dataBase: assetBase ? `${assetBase}/data/` : '/data/' });
++      return;
++    }
+     await serveStatic(req, res, parts.rawPath, parts.query);
+   }
+ 
+diff --git a/server/lobby.js b/server/lobby.js
+index 725df37..2895eb0 100644
+--- a/server/lobby.js
++++ b/server/lobby.js
+@@ -181,6 +181,7 @@ export class Lobby {
+     this.opts = { ...LOBBY_DEFAULTS, ...options };
+     /** @type {Map<string, Room>} */
+     this.rooms = new Map();
++    this.matchQueue = new Map();
+     /** @type {Map<string, NodeJS.Timeout>} lobby grace timers by playerId */
+     this.graceTimers = new Map();
+     /** @type {Map<string, NodeJS.Timeout>} deferred (coalesced) resyncs by playerId */
+@@ -251,6 +252,7 @@ export class Lobby {
+   onMessage(session, msg) {
+     switch (msg.t) {
+       case 'room.create': return this.create(session, msg);
++      case 'room.matchmake': return this.matchmake(session, msg);
+       case 'room.join': return this.join(session, msg);
+       case 'room.leave': return this.leave(session);
+       case 'room.ready': return this.ready(session, msg);
+@@ -356,6 +358,24 @@ export class Lobby {
+     return OK;
+   }
+ 
++  matchmake(session, { difficulty }) {
++    const cur = this.roomOf(session);
++    if (cur?.match) return fail(ERR.ROOM_STARTED);
++    const key = String(difficulty);
++    const waiting = this.matchQueue.get(key) || [];
++    const other = waiting.shift();
++    if (waiting.length) this.matchQueue.set(key, waiting); else this.matchQueue.delete(key);
++    if (other && this.registry.byId(other.playerId)?.connected) {
++      const result = this.create(session, { mode: 'coop', difficulty });
++      const room = this.roomOf(session);
++      if (room) this.join(other, { code: room.code });
++      return result;
++    }
++    waiting.push({ playerId: session.playerId });
++    this.matchQueue.set(key, waiting);
++    return OK;
++  }
++
+   leave(session) {
+     const room = this.roomOf(session);
+     if (!room) return fail(ERR.NOT_IN_ROOM);
+diff --git a/shared/protocol.js b/shared/protocol.js
+index 7c1ab02..69ed4ee 100644
+--- a/shared/protocol.js
++++ b/shared/protocol.js
+@@ -231,6 +231,7 @@ export const C2S = {
+   hello: { name: (v) => isStr(v, NAME_MAX_LEN) && v.trim().length > 0, token: (v) => v == null || isStr(v, 64), version: (v) => v == null || isInt(v, 0, 1e6), $optional: ['token', 'version'] },
+   ping: { c: (v) => typeof v === 'number' && Number.isFinite(v) },
+   'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v) },
++  'room.matchmake': { difficulty: (v) => DIFFICULTIES.includes(v) },
+   'room.join': { code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
+   'room.leave': {},
+   'room.ready': { ready: isBool },
