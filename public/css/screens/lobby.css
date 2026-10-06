@@ -243,4 +243,4 @@
 
 /* create actions row: 创建同盟 and 多人匹配 side by side */
 .create-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .16rem; }
-.create-actions .btn--xl { font-size: .24rem; }
+.create-actions .btn { height: .92rem; font-size: .24rem; letter-spacing: .2em; }
