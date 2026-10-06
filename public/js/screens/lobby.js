@@ -325,28 +325,6 @@ export function LobbyScreen() {
           ${MODE_CARDS.map((c) => html`<${ModeCard} key=${c.id} card=${c} selected=${roomMode === c.id} onSelect=${pickMode} />`)}
         </div>
 
-        <${TipsPanel} />
-      </section>
-
-      <section class="lobby-right">
-        <div class="section-label"><span class="section-label__idx num">02</span>模拟难度<${MicroLabel}>DIFFICULTY<//></div>
-        <div class="diff-list">
-          ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${roomMode} difficulty=${d} selected=${difficulty === d} onSelect=${pickDifficulty} />`)}
-        </div>
-        <div class="create-box">
-          <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${roomMode !== 'solo' && !online} onClick=${create}>
-              ${roomMode === 'solo' ? '开始独立模拟' : '创建同盟'}
-            <//>
-          <//>
-          <div class="create-box__hint">
-            ${online
-              ? html`<span>${roomMode === 'solo' ? '创建后即可开始模拟' : '创建后可邀请好友或添加 AI 队友'}</span>`
-              : roomMode === 'solo' ? html`<span>离线缓存可直接开始本地模拟</span>` : html`<${Spinner} size="sm" label="CONNECTING" />`}
-          </div>
-          ${roomMode === 'coop' && online ? html`<${Button} variant="secondary" block=${true} icon="users" loading=${busy === 'matchmake'} onClick=${matchmake}>多人匹配<//>` : null}
-        </div>
-
         <div class="section-label"><span class="section-label__idx num">03</span>加入同盟<${MicroLabel}>JOIN WITH ALLIANCE KEY<//></div>
         <${Panel} class="join-panel" tone="amber">
           <div class="join-row">
@@ -364,6 +342,34 @@ export function LobbyScreen() {
               : html`<span class="t-dim">向同伴索取 ${ROOM_CODE_LEN} 位同盟密钥，或直接打开邀请链接</span>`}
           </div>
         <//>
+
+        <${TipsPanel} />
+      </section>
+
+      <section class="lobby-right">
+        <div class="section-label"><span class="section-label__idx num">02</span>模拟难度<${MicroLabel}>DIFFICULTY<//></div>
+        <div class="diff-list">
+          ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${roomMode} difficulty=${d} selected=${difficulty === d} onSelect=${pickDifficulty} />`)}
+        </div>
+        <div class="create-box">
+          ${roomMode === 'coop' ? html`
+            <div class="create-actions">
+              <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
+                <${Button} variant="primary" size="xl" iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>创建同盟<//>
+              <//>
+              ${online ? html`<${Button} variant="secondary" size="xl" icon="users" loading=${busy === 'matchmake'} onClick=${matchmake}>多人匹配<//>` : null}
+            </div>
+          ` : html`
+            <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
+              <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${roomMode !== 'solo' && !online} onClick=${create}>开始独立模拟<//>
+            <//>
+          `}
+          <div class="create-box__hint">
+            ${online
+              ? html`<span>${roomMode === 'solo' ? '创建后即可开始模拟' : '创建后可邀请好友或添加 AI 队友'}</span>`
+              : roomMode === 'solo' ? html`<span>离线缓存可直接开始本地模拟</span>` : html`<${Spinner} size="sm" label="CONNECTING" />`}
+          </div>
+        </div>
       </section>
     </div>
   </div>`;
