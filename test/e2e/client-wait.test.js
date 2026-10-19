@@ -27,12 +27,34 @@ function fakePage(trueAfter) {
   };
 }
 
+/**
+ * A page whose predicate holds from its `holdsOn`-th waitForFunction call on; each earlier slice times out after its own
+ * timeout, like puppeteer's. Counted in calls, not in wall time: on a loaded machine late timers merge time-based slices
+ * (fakePage(95) with 30 ms slices returned in 3 calls instead of 4 in the 0.2.0 candidate's full pass).
+ */
+function slicedPage(holdsOn) {
+  const calls = [];
+  return {
+    calls,
+    waitForFunction(fn, opts, ...args) {
+      calls.push({ fn, opts, args });
+      const holds = calls.length >= holdsOn;
+      return new Promise((resolve, reject) => {
+        if (holds) setTimeout(() => resolve({ handle: 'ok', args }), 0);
+        else setTimeout(() => reject(timeoutError(opts.timeout)), opts.timeout);
+      });
+    },
+  };
+}
+
 test('a wait longer than one slice keeps polling the same predicate until it holds', async () => {
-  const page = fakePage(95);
+  const page = slicedPage(4);
   const fn = () => true;
-  const got = await waitForFunctionLong(page, fn, { timeout: 1000, polling: 200, slice: 30 }, 'a', 2);
+  const t0 = Date.now();
+  const got = await waitForFunctionLong(page, fn, { timeout: 60_000, polling: 200, slice: 30 }, 'a', 2);
   assert.deepEqual(got, { handle: 'ok', args: ['a', 2] });
-  assert.ok(page.calls.length >= 4, `sliced (${page.calls.length} calls)`);
+  assert.equal(page.calls.length, 4, 'three slices ran out, the fourth held, nothing polled after it');
+  assert.ok(Date.now() - t0 >= 85, `the three slices waited their 30 ms each (${Date.now() - t0} ms)`);
   for (const c of page.calls) {
     assert.equal(c.fn, fn);
     assert.deepEqual(c.args, ['a', 2]);
@@ -77,8 +99,11 @@ test('no Client suite has a plain page.waitForFunction as long as the protocol t
     const src = readFileSync(path.join(ROOT, f), 'utf8');
     if (!/from '\.\.\/e2e\/client\.mjs'|from '\.\/client\.mjs'/.test(src)) continue;
     for (let i = src.indexOf('.waitForFunction('); i >= 0; i = src.indexOf('.waitForFunction(', i + 1)) {
-      const next = src.indexOf('.waitForFunction(', i + 1);
-      const m = src.slice(i, next < 0 ? undefined : next).match(/\{ timeout: ([0-9_]+)/);
+      // the call's own arguments (balanced parentheses), not the text up to the next call: a test's own
+      // `{ timeout }` option between two waits is not a wait's timeout
+      let end = i + '.waitForFunction('.length;
+      for (let depth = 1; end < src.length && depth > 0; end++) depth += src[end] === '(' ? 1 : src[end] === ')' ? -1 : 0;
+      const m = src.slice(i, end).match(/\{ timeout: ([0-9_]+)/);
       if (m && Number(m[1].replace(/_/g, '')) >= PROTOCOL_TIMEOUT_MS) long.push(`${f}:${src.slice(0, i).split('\n').length} (${m[1]} ms)`);
     }
   }

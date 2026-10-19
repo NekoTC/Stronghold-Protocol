@@ -1,6 +1,6 @@
 // test/render/board3d-extract.test.js — the local-client exports behind the official 3D board (DESIGN §13/§15):
 // tools/local-extract/extract.py's board jobs (gate / objective effects, blower texture, water & noise maps), the
-// derived three.js maps (BC5 normal → RGB normal, Unity metallic/gloss → roughness), the WebP copies of the textures
+// derived three.js maps (BC5 / DXT5nm normal → RGB normal, Unity metallic/gloss → roughness), the WebP copies of the textures
 // the renderer downloads (extract.py WEBP), the prefab mesh keys, and —
 // when a client was extracted here — the files and manifest entries the renderer loads (render/board3d/load.js).
 
@@ -41,8 +41,16 @@ describe('extract.py board jobs', { skip: !PY && 'no python3' }, () => {
     assert.equal(by['map/common'].bundle, 'arts/maps/common/res.ab');
     assert.ok(new RegExp(by['map/common'].keep).test('TX_wind_device') && !new RegExp(by['map/common'].keep).test('TX_R6_bomb'));
     assert.ok(new RegExp(by['map/water'].keep).test('[ucp]TX_water_normal'));
-    // no new mesh/ groups (the board meshes of DESIGN §15 stay the four of the mesh job table)
-    assert.equal(jobs.filter((j) => j.sub.startsWith('mesh/')).length, 4);
+    // the board meshes of DESIGN §15 (the four of the mesh job table) and the official 射击台 model (round 40): of the
+    // 卫戍协议 device bundle only 射击台 and 阻隔工事 meshes / textures / materials / GameObjects are kept
+    assert.equal(jobs.filter((j) => j.sub.startsWith('mesh/')).length, 5);
+    assert.equal(by['mesh/trap_110'].bundle, 'arts/maps/common/trap/trap_110.ab');
+    assert.deepEqual(PACK_MESHES.crate, ['mesh/trap_110', 'trap_1105_accrate']);
+    assert.deepEqual(PACK_IMAGES.crate, ['mesh/trap_110', 'TX_trap_1105_accrate']);
+    assert.deepEqual(PACK_MESHES.box, ['mesh/s_common_box_01', 'pCube2']);
+    const keep = new RegExp(by['mesh/trap_110'].keep);
+    for (const n of ['trap_1106_achplat', 'TX_trap_1106_achplat', 'MT_trap_1106_achplat', 'trap_1105_accrate', 'TX_trap_1105_accrate', 'MT_trap_1105_accrate']) assert.ok(keep.test(n), n);
+    for (const n of ['trap_1104_aclasert', 'TX_trap_1101_acplane_D', 'trap_1106_achplat_old', 'trap_1105_accrate_old']) assert.ok(!keep.test(n), n);
     assert.deepEqual(derived.map((d) => [d.sub, d.from, d.derive, d.name]), [
       ['map/autochess', 'TX_autochessi_N', 'normal_rg', 'TX_autochessi_N_rgb'],
       ['map/autochess', 'TX_autochessi_M', 'rough_from_gloss', 'TX_autochessi_M_rough'],
@@ -65,6 +73,23 @@ print(json.dumps({'n': [list(rn.getpixel((i, 0))) for i in range(3)], 'm': [list
     assert.deepEqual(out.m, [[255, 255, 0], [255, 55, 0]]);
   });
 
+  test('derived normal map: the DXT5nm layout (R = 1, G = Y, A = X) gives the same normals as BC5 (R = X, G = Y)', { skip: !HAS_PIL && 'no Pillow' }, () => {
+    const out = py(`
+from PIL import Image
+xy = [(128, 128), (255, 128), (128, 20), (90, 200), (0, 128), (37, 37)]
+bc5 = Image.new('RGB', (len(xy), 1)); nm = Image.new('RGBA', (len(xy), 1)); opaque = Image.new('RGBA', (len(xy), 1))
+for i, (x, y) in enumerate(xy):
+    bc5.putpixel((i, 0), (x, y, 0)); nm.putpixel((i, 0), (255, y, y, x)); opaque.putpixel((i, 0), (x, y, 0, 255))
+px = lambda im: [list(im.getpixel((i, 0))) for i in range(len(xy))]
+print(json.dumps({'bc5': px(e.derive_normal_rg(bc5)), 'nm': px(e.derive_normal_rg(nm)), 'opaque': px(e.derive_normal_rg(opaque)),
+                  'mode': e.derive_normal_rg(nm).mode, 'xy': xy}))`);
+    assert.equal(out.mode, 'RGB');
+    assert.deepEqual(out.nm, out.bc5, 'X read from A when R is 1');
+    assert.deepEqual(out.opaque, out.bc5, 'a BC5 map decoded with an opaque alpha');
+    assert.deepEqual(out.nm.map((p) => p.slice(0, 2)), out.xy, 'XY kept');
+    assert.ok(out.nm[0][2] >= 254 && out.nm[3][2] > 128, 'z rebuilt, not the 128 of x = 1');
+  });
+
   test('WebP copies: exactly the board textures the renderer downloads; normal and data maps stay lossless', () => {
     const r = spawnSync(PY, [path.join(TOOL, 'extract.py'), '--print-jobs'], { encoding: 'utf8', env: ENV });
     assert.equal(r.status, 0, r.stderr);
@@ -72,7 +97,7 @@ print(json.dumps({'n': [list(rn.getpixel((i, 0))) for i in range(3)], 'm': [list
     assert.deepEqual(webp.map((w) => `${w.sub}/${w.name}`).sort(), Object.values(PACK_IMAGES).map(([g, n]) => `${g}/${n}`).sort());
     const mode = Object.fromEntries(webp.map((w) => [w.name, w.mode]));
     for (const n of ['TX_autochessi_N_rgb', '[ucp]TX_water_normal', 'TX_autochessi_M_rough', 'T_noise_clouds_01']) assert.equal(mode[n], 'lossless', n);
-    for (const n of ['TX_autochessi_D', 'TX_autochessi_BG', 'TX_autochessi_common_D']) assert.equal(mode[n], 'lossy', n);
+    for (const n of ['TX_autochessi_D', 'TX_autochessi_BG', 'TX_autochessi_common_D', 'TX_trap_1106_achplat', 'TX_trap_1105_accrate']) assert.equal(mode[n], 'lossy', n);
   });
 
   test('run_webp / --webp: a copy beside the PNG that the manifest lists; normals exact, alpha and hidden RGB kept', { skip: !HAS_WEBP && 'no Pillow with WebP' }, () => {
@@ -182,7 +207,7 @@ describe('extracted board files (when a local client was extracted)', { skip: !m
     const n = decodePng(readFileSync(onDisk(pngOf(g.TX_autochessi_N_rgb.path))));
     let zSum = 0, cnt = 0;
     for (let i = 0; i < n.rgba.length; i += 4 * 97) { zSum += n.rgba[i + 2]; cnt++; }
-    assert.ok(zSum / cnt > 230, `mean z ${zSum / cnt}`);
+    assert.ok(zSum / cnt > 230, `mean z ${zSum / cnt} (128 = made by an extract.py that read a DXT5nm map as BC5: re-extract with --only map/autochess)`);
     const m = decodePng(readFileSync(onDisk(g.TX_autochessi_M.path)));
     const r = decodePng(readFileSync(onDisk(pngOf(g.TX_autochessi_M_rough.path))));
     assert.deepEqual([r.w, r.h], [m.w, m.h]);

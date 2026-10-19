@@ -3,6 +3,7 @@
 // One app-wide store holds everything the UI renders from:
 //   connection  – socket status + latency + online count (fed by net.js via main.js)
 //   me          – { playerId, name, token } from `welcome`
+//   content     – `welcome.content`: the server's content identity { vanilla: <cs> } (DESIGN §32), or null
 //   session     – { entered } (the player pressed 开始 on the title screen in this tab)
 //   room        – last `room.state` payload (without `t`) or null
 //   match       – { public, private, field, result } from the `m.*` pushes; `battle` = the local battle runner's
@@ -21,6 +22,7 @@
 
 import { useLayoutEffect, useReducer, useRef } from '../vendor/hooks.module.js';
 import { PHASE } from '../../shared/constants.js';
+import { t } from '../../shared/i18n.js';
 
 /**
  * Create an observable store.
@@ -76,8 +78,15 @@ export const emptyMatch = () => ({ public: null, private: null, field: null, res
 export const initialState = Object.freeze({
   connection: { status: 'idle', ping: null, onlineCount: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
   me: { playerId: null, name: '', token: null },
+  content: null,
+  // how many unofficial plugins the server has (DESIGN §32 P1a: /healthz or welcome `content.plugins`; content.js)
+  installedPlugins: 0,
+  // A language-only installation may have announcements without an unofficial plugin count.
+  installedNotices: false,
   session: { entered: false },
   room: null,
+  // welcome.testMode (DESIGN §34.8). The server omits the key when the switch is off; the client cannot set it.
+  testMode: false,
   match: emptyMatch(),
   ticker: [],
   emotes: [],
@@ -126,8 +135,8 @@ export function isSpectating(room, playerId) {
 export function sessionResetNotice(prev, playerId) {
   const prevId = prev?.me?.playerId;
   if (prevId == null || prevId === playerId) return null;
-  if (prev?.match?.public || prev?.room?.inMatch) return '服务器会话已重置，上一局模拟已结束';
-  if (prev?.room) return '服务器会话已重置，已返回大厅';
+  if (prev?.match?.public || prev?.room?.inMatch) return t('服务器会话已重置，上一局模拟已结束');
+  if (prev?.room) return t('服务器会话已重置，已返回大厅');
   return null;
 }
 

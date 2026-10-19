@@ -59,7 +59,10 @@ test('positionClass: a MELEE chess whose trait reads 「可以放置于远程位
   assert.equal(positionClass({ position: 'MELEE' }), 'melee');
   assert.equal(positionClass({ position: 'MELEE', placement: 'all' }), 'melee', 'the old placement field is ignored');
   assert.equal(positionClass({ position: 'MELEE', trait: { desc: '技能可以使敌人产生位移\n可以放置于远程位' } }), 'all', 'the trait line');
+  assert.equal(positionClass({ position: 'MELEE', placeOnRanged: true, trait: { desc: 'Can be deployed on Ranged Tiles' } }), 'all', 'the build flag, translated text');
+  assert.equal(positionClass({ position: 'MELEE', trait: { desc: 'Can be deployed on Ranged Tiles' } }), 'melee', 'a translation alone is not the line');
   assert.equal(positionClass({ position: 'MELEE', trait: { desc: '可以额外部署在远程位' } }), 'melee', 'another wording is not the line');
+  assert.equal(positionClass({ position: 'RANGED', placeOnRanged: true }), 'ranged', 'the flag does not widen a ranged record');
   assert.equal(positionClass({ position: 'RANGED', trait: { desc: '可以放置于远程位' } }), 'ranged', 'a ranged record keeps its class');
   assert.equal(basePositionClass({ position: 'MELEE', trait: { desc: '可以放置于远程位' } }), 'melee', 'the battle class stays melee');
   assert.equal(positionClass({ position: 'RANGED' }), 'ranged');
@@ -254,8 +257,10 @@ test('withdrawing a deployed summon into a full hand: HAND_FULL like any other c
   assert.ok(drone && drone.count === 1, 'one 狼群');
   // (9,6): inside 伺夜's range ("只能部署在召唤者攻击范围内", player report #9 after 0.1.0)
   assert.deepEqual(m.handle('p_0', { t: 'g.move', uid: drone.uid, to: { area: 'board', row: 9, col: 6 } }), { ok: true });
-  // golden items never merge with each other: a plain full hand
-  for (let i = 0; i < ps.hand.length; i++) if (!ps.hand[i]) giveItem(m, ps, 'chess_item_1_02_e_b', 'hand', i);
+  // One distinct golden per empty slot: goldens do not merge, and each base stays within its shared cap.
+  const fillers = Object.values(DATA.items).filter((r) => r.isGolden && r.itemType === 'EQUIP' && (m.gd.itemPoolCopies(r.id) ?? 0) >= 2).map((r) => r.id);
+  let n = 0;
+  for (let i = 0; i < ps.hand.length; i++) if (!ps.hand[i]) giveItem(m, ps, fillers[n++], 'hand', i);
   assert.ok(ps.hand.every(Boolean) && ps.tempEmpty);
   assert.equal(m.handle('p_0', { t: 'g.move', uid: drone.uid, to: { area: 'hand', idx: 0 } }).error, ERR.HAND_FULL, 'a new card for a full hand');
   assert.equal(ps.board.get('9,6'), drone, 'the 狼群 stays on the board');

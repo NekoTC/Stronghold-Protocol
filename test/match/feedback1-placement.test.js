@@ -25,6 +25,7 @@ import { DATA, makeMatch, give, giveItem, checkInvariants, chessOfTier } from '.
 import { botPrep, planLayout, fieldModel } from '../../server/match/bot.js';
 import { placementContext, canPlace as clientCanPlace, boardTargets, deployMap as clientDeployMap } from '../../public/js/ui/gameLogic.js';
 import { makeBattle } from '../helpers/battleHarness.js';
+import { renderMessage } from '../../shared/i18n.js';
 
 const STAGE = 'act2autochess_m04';
 const WATER = ['10,6', '11,6', '12,6'];
@@ -180,7 +181,7 @@ test('#9 re-orienting the tactician: a summon still inside the new range stays, 
   m.dispose();
 });
 
-test('#9 hand and temp full: a re-orientation that would push 狼群 out is refused (HAND_FULL); a move drops it until the next round', () => {
+test('#9 full visible bench: a re-orientation is refused (HAND_FULL); moving the owner queues its wolf stack', () => {
   const { h, m, ps } = prep();
   const vigil = give(m, ps, VIGIL);
   assert.deepEqual(move(m, vigil.uid, board(10, 4), 'RIGHT'), { ok: true });
@@ -189,10 +190,12 @@ test('#9 hand and temp full: a re-orientation that would push 狼群 out is refu
   assert.equal(stackOf(ps, WOLF), null, 'its only copy is placed: no stack left to return onto');
   const toasts = [];
   const toast = m.toast.bind(m);
-  m.toast = (p, kind, text) => { toasts.push(text); return toast(p, kind, text); };
-  const golden = Object.keys(DATA.items).find((id) => DATA.items[id].isGolden && DATA.items[id].itemType === 'EQUIP');
-  while (ps.hand.includes(null)) giveItem(m, ps, golden);
-  while (ps.temp.includes(null)) giveItem(m, ps, golden, 'temp');
+  m.toast = (p, kind, text) => { toasts.push(renderMessage(text)); return toast(p, kind, text); }; // string or msg()
+  // One distinct golden per empty slot: goldens do not merge, and each base stays within its shared cap.
+  const fillers = Object.values(DATA.items).filter((r) => r.isGolden && r.itemType === 'EQUIP' && (m.gd.itemPoolCopies(r.id) ?? 0) >= 2).map((r) => r.id);
+  let n = 0;
+  while (ps.hand.includes(null)) giveItem(m, ps, fillers[n++]);
+  while (ps.temp.includes(null)) giveItem(m, ps, fillers[n++], 'temp');
   // facing LEFT would leave (11,5) outside her range and the wolf has nowhere to go: refused, nothing changes
   assert.equal(move(m, vigil.uid, board(10, 4), 'LEFT').error, ERR.HAND_FULL);
   assert.equal(ps.board.get('10,4').dir, 'RIGHT');
@@ -205,7 +208,9 @@ test('#9 hand and temp full: a re-orientation that would push 狼群 out is refu
   // range (rows 8–10, cols 9–12) leaves the wolf out: it leaves the board — no illegal placement reaches the battle
   assert.deepEqual(move(m, vigil.uid, board(9, 9), 'RIGHT'), { ok: true });
   assert.equal(ps.board.get('11,5'), undefined, 'outside her range with nowhere to go: removed');
-  assert.ok(toasts.some((t) => t.includes('狼群') && t.includes('下回合返还')), toasts.join(' / '));
+  assert.ok(!toasts.some((t) => t.includes('狼群') && t.includes('下回合返还')), toasts.join(' / '));
+  assert.equal(stackOf(ps, WOLF), wolf, 'the original stack is retained in overflow');
+  assert.equal(ps.temp.length, 6);
   assert.equal(ps.battleInput().units.filter((u) => u.kind === 'token').length, 0);
   checkInvariants(m);
   // …and its stack comes back at the next round start (grantTokensFor, "干员所属召唤物会于下一回合返还")
@@ -335,6 +340,8 @@ test('高台 data: no chess stores placement; 「可以放置于远程位」 is 
   for (const t of Object.values(DATA.tokens)) assert.equal(t.placement, undefined, t.tokenId);
   const widened = Object.values(DATA.chess).filter((c) => meleeOnHighGround(c)).map((c) => c.chessId).sort();
   assert.deepEqual(widened, HOLDERS.slice().sort());
+  const flagged = Object.values(DATA.chess).filter((c) => c.placeOnRanged === true).map((c) => c.chessId).sort();
+  assert.deepEqual(flagged, HOLDERS.slice().sort(), 'placeOnRanged is exactly those six');
   for (const id of HOLDERS) {
     const c = DATA.chess[id];
     assert.equal(c.position, 'MELEE', id);
